@@ -1,0 +1,48 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\NexusRelatorios\nexus_levantamento\windows\flutter\ephemeral\.plugin_symlinks\file_selector_windows\windows\file_selector_windows.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\NexusRelatorios\nexus_levantamento\windows\flutter\ephemeral\.plugin_symlinks\file_selector_windows\windows\file_dialog_controller.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\NexusRelatorios\nexus_levantamento\windows\flutter\ephemeral\.plugin_symlinks\file_selector_windows\windows\file_selector_plugin.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\NexusRelatorios\nexus_levantamento\windows\flutter\ephemeral\.plugin_symlinks\file_selector_windows\windows\messages.g.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\NexusRelatorios\nexus_levantamento\windows\flutter\ephemeral\.plugin_symlinks\file_selector_windows\windows\string_utils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="C:\NexusRelatorios\nexus_levantamento\windows\flutter\ephemeral\.plugin_symlinks\file_selector_windows\windows\include\file_selector_windows\file_selector_windows.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\NexusRelatorios\nexus_levantamento\windows\flutter\ephemeral\.plugin_symlinks\file_selector_windows\windows\file_dialog_controller.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\NexusRelatorios\nexus_levantamento\windows\flutter\ephemeral\.plugin_symlinks\file_selector_windows\windows\file_selector_plugin.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\NexusRelatorios\nexus_levantamento\windows\flutter\ephemeral\.plugin_symlinks\file_selector_windows\windows\messages.g.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\NexusRelatorios\nexus_levantamento\windows\flutter\ephemeral\.plugin_symlinks\file_selector_windows\windows\string_utils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\NexusRelatorios\nexus_levantamento\windows\flutter\ephemeral\.plugin_symlinks\file_selector_windows\windows\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{C335489B-49C9-3313-B4B6-0C3C3DFC63BF}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{C488044F-3703-32B3-9B55-19A250825691}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

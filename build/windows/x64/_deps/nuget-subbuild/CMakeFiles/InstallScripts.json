@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/NexusRelatorios/nexus_levantamento/build/windows/x64/_deps/nuget-subbuild/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

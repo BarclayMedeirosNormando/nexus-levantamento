@@ -1,0 +1,1 @@
+ C:\\NexusRelatorios\\nexus_levantamento\\.dart_tool\\flutter_build\\249de0be1ccf3cb12c2a617d9a33b5d3\\native_assets.json C:\\NexusRelatorios\\nexus_levantamento\\build\\native_assets\\windows\\sqlite3.dll:  C:\\NexusRelatorios\\nexus_levantamento\\.dart_tool\\hooks_runner\\shared\\sqlite3\\build\\download-2bf39f2a\\sqlite3.dll
