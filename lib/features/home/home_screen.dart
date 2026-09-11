@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
+import '../../core/route_observer.dart';
 import '../../core/theme.dart';
 import '../../data/local/escolas_repository.dart';
+import '../../data/local/levantamentos_repository.dart';
+import '../../data/levantamento_sync_service.dart';
 import '../../data/remote/api_client.dart';
 import '../../data/remote/auth_service.dart';
 import '../../data/sync_service.dart';
 import '../auth/login_screen.dart';
+import '../catalogo/catalogo_modelos_screen.dart';
 import '../escola/escola_detail_screen.dart';
+import '../levantamento/levantamento_screen.dart';
 import 'escola_card.dart';
 import 'regionais_screen.dart';
 
@@ -15,6 +20,10 @@ import 'regionais_screen.dart';
 ///   que rolar uma lista só.
 /// - **Busca preenchida**: lista plana filtrada por nome/INEP/município,
 ///   ignorando a árvore (a pessoa já sabe o que procura).
+///
+/// Acima de tudo isso, sempre visível quando existir: a seção
+/// "Levantamentos em andamento" (§5 Tela 2 do spec) — o que ficou pra trás,
+/// sem precisar navegar pela árvore de novo pra achar.
 ///
 /// ESCOLAS é tabela de referência, só leitura no app (ver §4/§9 do spec) —
 /// tudo aqui lê do SQLite local, sync é só o botão/ícone pra atualizar.
@@ -26,15 +35,19 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with RouteAware {
   final _syncService = SyncService();
+  final _levantamentoSyncService = LevantamentoSyncService();
   final _escolasRepo = EscolasRepository();
+  final _levantamentosRepo = LevantamentosRepository();
   final _buscaController = TextEditingController();
 
   bool _syncing = false;
   bool _carregandoBusca = false;
+  bool _carregandoEmAndamento = true;
   String? _erroSync;
   List<Escola> _resultadosBusca = const [];
+  List<LevantamentoComEscola> _emAndamento = const [];
 
   // Muda a cada sync bem-sucedido, pra forçar a árvore de regionais (que
   // carrega uma vez no initState dela) a recarregar com dados novos.
@@ -44,13 +57,46 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _buscaController.addListener(_onBuscaChanged);
+    _carregarEmAndamento();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute<void>) {
+      routeObserver.subscribe(this, route);
+    }
   }
 
   @override
   void dispose() {
+    routeObserver.unsubscribe(this);
     _buscaController.removeListener(_onBuscaChanged);
     _buscaController.dispose();
     super.dispose();
+  }
+
+  // Chamado pelo RouteObserver toda vez que voltamos pra Home depois de
+  // empilhar outra tela (ex.: abrir uma escola, abrir/continuar um
+  // levantamento, voltar da seleção de ambientes) — mantém a lista de
+  // "em andamento" sempre batendo com o que existe agora, sem depender de
+  // um botão manual de atualizar.
+  @override
+  void didPopNext() {
+    _carregarEmAndamento();
+  }
+
+  Future<void> _carregarEmAndamento() async {
+    final lista = await _levantamentosRepo.listarEmAndamento(
+      matricula: widget.session.matricula,
+      isAdm: widget.session.isAdm,
+    );
+    if (!mounted) return;
+    setState(() {
+      _emAndamento = lista;
+      _carregandoEmAndamento = false;
+    });
   }
 
   void _onBuscaChanged() {
@@ -80,11 +126,39 @@ class _HomeScreenState extends State<HomeScreen> {
       _erroSync = null;
     });
     try {
+      // Ordem importa: sobe primeiro o que este aparelho tem pendente —
+      // antes de puxar referência/levantamentos ativos, pra não correr o
+      // risco de um pull trazer de volta algo desatualizado por cima do
+      // que ainda não tinha sido enviado (ver regra de conflito em
+      // LevantamentoSyncService, §5b/§6 do spec).
+      final push = await _levantamentoSyncService.pushPendentes(widget.session);
       await _syncService.pullReferencia(widget.session);
+      final pull = await _levantamentoSyncService.pullLevantamentosAtivos(widget.session);
+
       if (!mounted) return;
       setState(() => _arvoreKey = UniqueKey());
       if (_buscaController.text.trim().isNotEmpty) {
         await _buscarEscolas(_buscaController.text);
+      }
+      // Um levantamento onde este usuário foi adicionado como auxiliar por
+      // outro técnico só aparece aqui depois desse pull — recarrega pra
+      // refletir na hora, sem precisar reabrir a Home.
+      await _carregarEmAndamento();
+
+      if (!mounted) return;
+      final partes = <String>[];
+      if (push.levantamentosEnviados > 0) {
+        partes.add(
+          '${push.levantamentosEnviados} levantamento${push.levantamentosEnviados == 1 ? '' : 's'} enviado${push.levantamentosEnviados == 1 ? '' : 's'}',
+        );
+      }
+      if (pull.levantamentos > 0) {
+        partes.add(
+          '${pull.levantamentos} levantamento${pull.levantamentos == 1 ? '' : 's'} baixado${pull.levantamentos == 1 ? '' : 's'}',
+        );
+      }
+      if (partes.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(partes.join(' · '))));
       }
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -110,6 +184,24 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _abrirLevantamentoEmAndamento(LevantamentoComEscola item) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => LevantamentoScreen(
+          escola: item.escola,
+          levantamento: item.levantamento,
+          session: widget.session,
+        ),
+      ),
+    );
+  }
+
+  void _abrirCatalogoModelos() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => CatalogoModelosScreen(session: widget.session)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final buscando = _buscaController.text.trim().isNotEmpty;
@@ -118,6 +210,11 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Minhas Escolas'),
         actions: [
+          IconButton(
+            onPressed: _abrirCatalogoModelos,
+            icon: const Icon(Icons.inventory_2_outlined),
+            tooltip: 'Catálogo de Modelos',
+          ),
           IconButton(
             onPressed: _syncing ? null : _sincronizar,
             icon: _syncing
@@ -156,6 +253,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
+          if (!_carregandoEmAndamento && _emAndamento.isNotEmpty) _buildEmAndamento(),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: TextField(
@@ -203,6 +301,76 @@ class _HomeScreenState extends State<HomeScreen> {
             child: buscando
                 ? _buildResultadosBusca()
                 : RegionaisLista(key: _arvoreKey, session: widget.session),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmAndamento() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.warning.withOpacity(0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.hourglass_top_rounded, size: 16, color: AppColors.warning),
+              const SizedBox(width: 6),
+              Text(
+                'Levantamentos em andamento (${_emAndamento.length})',
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: AppColors.ink),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ..._emAndamento.map(
+            (item) => Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: InkWell(
+                onTap: () => _abrirLevantamentoEmAndamento(item),
+                borderRadius: BorderRadius.circular(10),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              item.escola.nome,
+                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.ink),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            if (item.escola.municipio != null)
+                              Text(
+                                item.escola.municipio!,
+                                style: const TextStyle(fontSize: 11, color: AppColors.muted),
+                              ),
+                          ],
+                        ),
+                      ),
+                      if (widget.session.isAdm && item.levantamento.tecnicoAbertura.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: Text(
+                            item.levantamento.tecnicoAbertura,
+                            style: const TextStyle(fontSize: 11, color: AppColors.muted),
+                          ),
+                        ),
+                      const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.muted),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
         ],
       ),

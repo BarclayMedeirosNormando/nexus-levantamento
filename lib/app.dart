@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'core/route_observer.dart';
 import 'core/theme.dart';
 import 'data/remote/auth_service.dart';
 import 'features/auth/login_screen.dart';
@@ -13,6 +14,7 @@ class NexusLevantamentoApp extends StatelessWidget {
       title: 'Nexus Levantamento',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
+      navigatorObservers: [routeObserver],
       home: const _StartupGate(),
     );
   }

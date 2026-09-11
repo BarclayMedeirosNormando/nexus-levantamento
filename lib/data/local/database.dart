@@ -21,7 +21,14 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'nexus_levantamento.db';
-  static const _dbVersion = 1;
+  // v2: adiciona `levantamentos.ambientes_selecao_feita` — marca que a
+  // pessoa já passou pela seleção inicial de ambientes (Tela 4), mesmo que
+  // tenha escolhido "pular". Sem essa coluna, um levantamento sem nenhum
+  // AMBIENTE criado (por ter pulado) não tinha como distinguir "ainda não
+  // decidiu" de "decidiu não ter ambiente nenhum" — a tela voltava a
+  // mostrar a seleção pra sempre. Ver LevantamentosRepository/
+  // LevantamentoScreen.
+  static const _dbVersion = 2;
 
   Database? _db;
 
@@ -51,6 +58,17 @@ class AppDatabase {
       version: _dbVersion,
       onCreate: (db, version) async {
         await _createSchema(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        // Migração incremental — nunca recria a base (perderia os dados já
+        // sincronizados/cadastrados em campo). Cada bloco `if` cobre um
+        // salto de versão; vários podem rodar em sequência se o app pular
+        // mais de uma versão de uma vez.
+        if (oldVersion < 2) {
+          await db.execute(
+            'ALTER TABLE levantamentos ADD COLUMN ambientes_selecao_feita INTEGER NOT NULL DEFAULT 0',
+          );
+        }
       },
     );
   }
@@ -120,6 +138,7 @@ class AppDatabase {
         assinatura_url TEXT,
         reaberto_por TEXT,
         data_reabertura TEXT,
+        ambientes_selecao_feita INTEGER NOT NULL DEFAULT 0,
         criado_em TEXT,
         atualizado_em TEXT,
         sync_status TEXT NOT NULL DEFAULT 'pending'

@@ -44,6 +44,10 @@ class SyncService {
     final contratos = (resposta['contratos_internet'] as List?) ?? const [];
     final ambientesPadrao = (resposta['ambientes_padrao'] as List?) ?? const [];
     final catalogo = (resposta['catalogo_equipamentos'] as List?) ?? const [];
+    // Nome do campo também tem que bater com actionPullReferencia — vem de
+    // lerIndiceEquipamentos() no backend: só ID/INEP/TOMBAMENTO/NUM_SERIE
+    // de EQUIPAMENTOS, nunca a linha inteira (aba que mais cresce).
+    final indiceEquipamentos = (resposta['indice_tombamentos_serie'] as List?) ?? const [];
 
     final db = await AppDatabase.instance.database;
     await db.transaction((txn) async {
@@ -105,6 +109,35 @@ class SyncService {
           'modelo': m['MODELO']?.toString(),
           'chave_modelo': m['CHAVE_MODELO']?.toString(),
         }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+
+      // Índice leve de duplicidade (Tombamento/Nº de Série) — ver
+      // EquipamentosRepository.verificarDuplicidade e spec §5b/§10. Mesmo
+      // padrão "replace all" das outras tabelas de referência: sempre
+      // substitui inteiro pelo que veio do servidor, nunca merge parcial.
+      // Uma chave por TOMBAMENTO e outra por NUM_SERIE — por isso cada
+      // linha do índice pode gerar até duas entradas aqui.
+      await txn.delete('indice_duplicidade');
+      for (final item in indiceEquipamentos) {
+        final m = item as Map<String, dynamic>;
+        final id = m['ID']?.toString() ?? '';
+        if (id.isEmpty) continue;
+        final tombamento = m['TOMBAMENTO']?.toString().trim() ?? '';
+        final numSerie = m['NUM_SERIE']?.toString().trim() ?? '';
+        if (tombamento.isNotEmpty) {
+          await txn.insert('indice_duplicidade', {
+            'chave': 'TOMBAMENTO|${tombamento.toUpperCase()}',
+            'tipo': 'TOMBAMENTO',
+            'id_equipamento': id,
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+        if (numSerie.isNotEmpty) {
+          await txn.insert('indice_duplicidade', {
+            'chave': 'NUM_SERIE|${numSerie.toUpperCase()}',
+            'tipo': 'NUM_SERIE',
+            'id_equipamento': id,
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
       }
     });
 

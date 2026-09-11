@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
 import '../../core/location_helper.dart';
 import '../../core/theme.dart';
+import '../../data/local/auxiliares_repository.dart';
 import '../../data/local/escolas_repository.dart';
 import '../../data/local/levantamentos_repository.dart';
 import '../../data/remote/auth_service.dart';
 import '../levantamento/levantamento_screen.dart';
+import '../levantamento/selecao_auxiliares_screen.dart';
 
 /// Dados cadastrais da escola + abertura/continuação de levantamento (Tela
-/// 3 do spec). Histórico de levantamentos concluídos e "Adicionar técnicos
-/// auxiliares" ainda não entram aqui — próximas fatias.
+/// 3 do spec), incluindo a seleção opcional de técnicos auxiliares antes de
+/// abrir um levantamento novo (§2/§5b).
 class EscolaDetailScreen extends StatefulWidget {
   const EscolaDetailScreen({super.key, required this.escola, required this.session});
   final Escola escola;
@@ -20,6 +22,7 @@ class EscolaDetailScreen extends StatefulWidget {
 
 class _EscolaDetailScreenState extends State<EscolaDetailScreen> {
   final _levantamentosRepo = LevantamentosRepository();
+  final _auxiliaresRepo = AuxiliaresRepository();
 
   bool _carregando = true;
   bool _abrindo = false;
@@ -36,8 +39,13 @@ class _EscolaDetailScreenState extends State<EscolaDetailScreen> {
     final emAndamento = await _levantamentosRepo.buscarEmAndamento(
       inep: widget.escola.inep,
       matricula: widget.session.matricula,
+      isAdm: widget.session.isAdm,
     );
-    final historico = await _levantamentosRepo.listarHistorico(widget.escola.inep);
+    final historico = await _levantamentosRepo.listarHistorico(
+      inep: widget.escola.inep,
+      matricula: widget.session.matricula,
+      isAdm: widget.session.isAdm,
+    );
     if (!mounted) return;
     setState(() {
       _emAndamento = emAndamento;
@@ -52,6 +60,16 @@ class _EscolaDetailScreenState extends State<EscolaDetailScreen> {
       return;
     }
 
+    // Passo opcional antes de abrir: escolher auxiliares (§2/§5 Tela 3 do
+    // spec). `null` = a pessoa voltou sem escolher nada -> cancela a
+    // abertura; lista vazia = "abrir sem auxiliares", segue normalmente.
+    final auxiliares = await Navigator.of(context).push<List<String>>(
+      MaterialPageRoute(
+        builder: (_) => SelecaoAuxiliaresScreen(matriculaAtual: widget.session.matricula),
+      ),
+    );
+    if (auxiliares == null || !mounted) return;
+
     setState(() => _abrindo = true);
     // Captura de GPS é "best effort" — nunca bloqueia a abertura (ver
     // LocationHelper). DATA_INICIO é sempre o momento real da criação.
@@ -62,6 +80,9 @@ class _EscolaDetailScreenState extends State<EscolaDetailScreen> {
       lat: posicao?.lat,
       long: posicao?.long,
     );
+    if (auxiliares.isNotEmpty) {
+      await _auxiliaresRepo.adicionarEmLote(idLevantamento: levantamento.id, matriculas: auxiliares);
+    }
     if (!mounted) return;
     setState(() {
       _abrindo = false;
@@ -72,11 +93,18 @@ class _EscolaDetailScreenState extends State<EscolaDetailScreen> {
   }
 
   void _irParaLevantamento(Levantamento levantamento) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => LevantamentoScreen(escola: widget.escola, levantamento: levantamento),
-      ),
-    );
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => LevantamentoScreen(escola: widget.escola, levantamento: levantamento, session: widget.session),
+          ),
+        )
+        .then((_) {
+      // Ao voltar (ex.: levantamento foi concluído/reaberto em outra tela),
+      // recarrega — o histórico visível pra este usuário pode ter mudado
+      // (ver regra de visibilidade em LevantamentosRepository).
+      if (mounted) _carregar();
+    });
   }
 
   @override
@@ -118,9 +146,11 @@ class _EscolaDetailScreenState extends State<EscolaDetailScreen> {
                 ),
                 const SizedBox(height: 8),
                 if (_historico.isEmpty)
-                  const Text(
-                    'Nenhum levantamento feito nesta escola ainda.',
-                    style: TextStyle(color: AppColors.muted, fontSize: 13),
+                  Text(
+                    widget.session.isAdm
+                        ? 'Nenhum levantamento feito nesta escola ainda.'
+                        : 'Nenhum levantamento em andamento seu (ou onde você é auxiliar) nesta escola.',
+                    style: const TextStyle(color: AppColors.muted, fontSize: 13),
                   )
                 else
                   ..._historico.map(

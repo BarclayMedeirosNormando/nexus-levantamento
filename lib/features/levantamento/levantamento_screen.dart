@@ -1,75 +1,451 @@
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
+import '../../data/local/ambientes_repository.dart';
+import '../../data/local/auxiliares_repository.dart';
 import '../../data/local/escolas_repository.dart';
 import '../../data/local/levantamentos_repository.dart';
+import '../../data/remote/auth_service.dart';
+import '../ambiente/ambiente_detail_screen.dart';
+import 'adicionar_ambiente_screen.dart';
+import 'conectividade_screen.dart';
+import 'gerenciar_auxiliares_screen.dart';
+import 'conclusao_screen.dart';
+import 'wifi_screen.dart';
 
-/// Levantamento aberto (em_andamento). Ainda um stub: DATA_INICIO e
-/// LAT/LONG_ABERTURA já são capturados na abertura (feito antes de chegar
-/// aqui — ver EscolaDetailScreen), mas a seleção de Ambientes (Tela 4 do
-/// spec) é a próxima etapa.
-class LevantamentoScreen extends StatelessWidget {
-  const LevantamentoScreen({super.key, required this.escola, required this.levantamento});
+/// Levantamento aberto (em_andamento). DATA_INICIO e LAT/LONG_ABERTURA já
+/// são capturados na abertura (feito antes de chegar aqui — ver
+/// EscolaDetailScreen). Esta tela cobre a Tela 4 do spec: se o levantamento
+/// ainda não tem nenhum AMBIENTE criado, mostra a seleção inicial (checklist
+/// de AMBIENTES_PADRAO, os `OBRIGATORIO=true` pré-marcados); depois disso
+/// (ou pulando a seleção), mostra a lista de ambientes já criados, com
+/// "Adicionar ambiente" sempre disponível pra completar depois.
+class LevantamentoScreen extends StatefulWidget {
+  const LevantamentoScreen({
+    super.key,
+    required this.escola,
+    required this.levantamento,
+    required this.session,
+  });
   final Escola escola;
   final Levantamento levantamento;
+  final Session session;
+
+  @override
+  State<LevantamentoScreen> createState() => _LevantamentoScreenState();
+}
+
+class _LevantamentoScreenState extends State<LevantamentoScreen> {
+  final _ambientesRepo = AmbientesRepository();
+  final _auxiliaresRepo = AuxiliaresRepository();
+  final _levantamentosRepo = LevantamentosRepository();
+
+  bool _carregando = true;
+  bool _salvando = false;
+  List<AmbientePadrao> _ambientesPadrao = const [];
+  List<Ambiente> _ambientesCriados = const [];
+  List<TecnicoOpcao> _auxiliares = const [];
+  final Set<String> _selecionados = {};
+
+  // Já começa com o valor vindo do banco (relevante ao "continuar" um
+  // levantamento que já passou por essa etapa antes); vira `true` também
+  // ao confirmar a seleção inicial nesta sessão (ver _confirmarSelecaoInicial).
+  late bool _selecaoAmbientesFeita = widget.levantamento.ambientesSelecaoFeita;
+
+  @override
+  void initState() {
+    super.initState();
+    _carregar();
+  }
+
+  Future<void> _carregar() async {
+    final padrao = await _ambientesRepo.listarPadrao();
+    final criados = await _ambientesRepo.listarPorLevantamento(widget.levantamento.id);
+    final auxiliares = await _auxiliaresRepo.listarAuxiliares(widget.levantamento.id);
+    if (!mounted) return;
+    setState(() {
+      _ambientesPadrao = padrao;
+      _ambientesCriados = criados;
+      _auxiliares = auxiliares;
+      // Pré-marca os obrigatórios só na primeira carga (lista de criados
+      // ainda vazia) — se já existem ambientes, essa seleção não é mais
+      // relevante (a tela já vai direto pra lista).
+      if (criados.isEmpty) {
+        _selecionados
+          ..clear()
+          ..addAll(padrao.where((p) => p.obrigatorio).map((p) => p.idTipoAmbiente));
+      }
+      _carregando = false;
+    });
+  }
+
+  Future<void> _recarregarAuxiliares() async {
+    final auxiliares = await _auxiliaresRepo.listarAuxiliares(widget.levantamento.id);
+    if (!mounted) return;
+    setState(() => _auxiliares = auxiliares);
+  }
+
+  Future<void> _recarregarAmbientesCriados() async {
+    final criados = await _ambientesRepo.listarPorLevantamento(widget.levantamento.id);
+    if (!mounted) return;
+    setState(() => _ambientesCriados = criados);
+  }
+
+  Future<void> _confirmarSelecaoInicial({bool pular = false}) async {
+    setState(() => _salvando = true);
+    if (!pular && _selecionados.isNotEmpty) {
+      final selecionados = _ambientesPadrao.where((p) => _selecionados.contains(p.idTipoAmbiente)).toList();
+      await _ambientesRepo.criarEmLote(
+        idLevantamento: widget.levantamento.id,
+        inep: widget.escola.inep,
+        matricula: widget.session.matricula,
+        selecionados: selecionados,
+      );
+    }
+    // Marca a etapa como concluída sempre — inclusive ao pular — senão,
+    // sem nenhum ambiente criado, a tela não teria como saber que a
+    // seleção já foi decidida e voltaria a mostrar o checklist pra sempre.
+    await _levantamentosRepo.marcarSelecaoAmbientesFeita(widget.levantamento.id);
+    await _recarregarAmbientesCriados();
+    if (!mounted) return;
+    setState(() {
+      _salvando = false;
+      _selecaoAmbientesFeita = true;
+    });
+  }
+
+  // Tela cheia (não bottom sheet) — dá pra marcar vários ambientes padrão
+  // de uma vez, igual à seleção inicial, e evita o bottom sheet estourar a
+  // altura da janela quando a lista de restantes é grande (bug relatado:
+  // "BOTTOM OVERFLOWED").
+  Future<void> _abrirAdicionarAmbiente() async {
+    final jaCriadosTipos = _ambientesCriados.map((a) => a.idTipoAmbiente).whereType<String>().toSet();
+    final restantes = _ambientesPadrao.where((p) => !jaCriadosTipos.contains(p.idTipoAmbiente)).toList();
+
+    final criouAlgo = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => AdicionarAmbienteScreen(
+          idLevantamento: widget.levantamento.id,
+          inep: widget.escola.inep,
+          matricula: widget.session.matricula,
+          padraoRestantes: restantes,
+        ),
+      ),
+    );
+    if (criouAlgo == true) {
+      await _recarregarAmbientesCriados();
+    }
+  }
+
+  // Tela cheia (não bottom sheet) — dá pra marcar/desmarcar vários técnicos
+  // de uma vez (adicionar E remover) e confirmar tudo junto, igual ao
+  // padrão já usado em "Adicionar ambiente" (bug relatado: só dava pra
+  // colocar ou tirar um técnico por vez, cada toque já confirmava sozinho).
+  Future<void> _abrirGerenciarAuxiliares() async {
+    final mudou = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => GerenciarAuxiliaresScreen(
+          idLevantamento: widget.levantamento.id,
+          matriculaDono: widget.levantamento.tecnicoAbertura,
+        ),
+      ),
+    );
+    if (mudou == true) {
+      await _recarregarAuxiliares();
+    }
+  }
+
+  Future<void> _abrirAmbiente(Ambiente ambiente) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AmbienteDetailScreen(
+          ambiente: ambiente,
+          idLevantamento: widget.levantamento.id,
+          inep: widget.escola.inep,
+          session: widget.session,
+        ),
+      ),
+    );
+    // Recarrega sempre ao voltar — cobre o caso de ter renomeado o
+    // ambiente lá dentro (a lista aqui mostra o nome, precisa refletir), e
+    // também os equipamentos cadastrados dentro dele (a contagem exibida
+    // no card precisa refletir).
+    await _recarregarAmbientesCriados();
+  }
+
+  void _abrirConectividade() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ConectividadeScreen(
+          escola: widget.escola,
+          levantamento: widget.levantamento,
+          ambientes: _ambientesCriados,
+          matricula: widget.session.matricula,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _abrirWifi() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => WifiScreen(
+          escola: widget.escola,
+          levantamento: widget.levantamento,
+          matricula: widget.session.matricula,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _abrirConclusao() async {
+    final concluido = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => ConclusaoScreen(
+          escola: widget.escola,
+          levantamento: widget.levantamento,
+          session: widget.session,
+        ),
+      ),
+    );
+    // Concluído: não há mais nada pra fazer aqui — volta pra tela da
+    // escola, que mostra o histórico já com o status "Concluído".
+    if (concluido == true && mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Só mostra o checklist inicial se a pessoa ainda não decidiu nada
+    // nesta etapa (nem criou ambiente, nem pulou explicitamente) — ver
+    // `_selecaoAmbientesFeita`/coluna `ambientes_selecao_feita`.
+    final mostrarSelecaoInicial = !_carregando && !_selecaoAmbientesFeita && _ambientesCriados.isEmpty;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.escola.nome),
+        actions: [
+          IconButton(
+            onPressed: _carregando ? null : _abrirWifi,
+            icon: const Icon(Icons.vpn_key),
+            tooltip: 'Wifi da escola',
+          ),
+          IconButton(
+            onPressed: _carregando ? null : _abrirConectividade,
+            icon: const Icon(Icons.wifi),
+            tooltip: 'Conectividade',
+          ),
+          IconButton(
+            onPressed: _carregando ? null : _abrirGerenciarAuxiliares,
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                const Icon(Icons.people_outline),
+                if (_auxiliares.isNotEmpty)
+                  Positioned(
+                    right: -4,
+                    top: -4,
+                    child: Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: const BoxDecoration(color: AppColors.warning, shape: BoxShape.circle),
+                      constraints: const BoxConstraints(minWidth: 15, minHeight: 15),
+                      child: Text(
+                        '${_auxiliares.length}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            tooltip: 'Técnicos auxiliares',
+          ),
+        ],
+      ),
+      body: _carregando
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                _InfoHeader(
+                  levantamento: widget.levantamento,
+                  qtdAuxiliares: _auxiliares.length,
+                  onTap: _abrirGerenciarAuxiliares,
+                ),
+                Expanded(
+                  child: mostrarSelecaoInicial ? _buildSelecaoInicial() : _buildListaAmbientes(),
+                ),
+              ],
+            ),
+      bottomNavigationBar: (!_carregando && mostrarSelecaoInicial)
+          ? SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _salvando ? null : () => _confirmarSelecaoInicial(),
+                        icon: _salvando
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.check_circle_outline, size: 20),
+                        label: Text(_salvando ? 'Criando...' : 'Criar Ambientes (${_selecionados.length})'),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _salvando ? null : () => _confirmarSelecaoInicial(pular: true),
+                      child: const Text('Pular por enquanto — adicionar depois'),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : (!_carregando && !mostrarSelecaoInicial)
+              ? SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _abrirConclusao,
+                        icon: const Icon(Icons.check_circle_outline, size: 18),
+                        label: const Text('Concluir levantamento'),
+                      ),
+                    ),
+                  ),
+                )
+              : null,
+      floatingActionButton: (!_carregando && !mostrarSelecaoInicial)
+          ? FloatingActionButton.extended(
+              onPressed: _abrirAdicionarAmbiente,
+              icon: const Icon(Icons.add),
+              label: const Text('Adicionar ambiente'),
+            )
+          : null,
+    );
+  }
+
+  Widget _buildSelecaoInicial() {
+    if (_ambientesPadrao.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: Text(
+            'Nenhum ambiente padrão sincronizado ainda. Toque em "Adicionar ambiente" depois, ou sincronize os dados na Home.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: AppColors.muted, fontSize: 13),
+          ),
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(8, 8, 8, 4),
+          child: Text(
+            'Marque os ambientes que essa escola tem. Os obrigatórios já vêm pré-marcados — desmarque o que não existir aqui.',
+            style: TextStyle(color: AppColors.muted, fontSize: 13),
+          ),
+        ),
+        ..._ambientesPadrao.map(
+          (p) => CheckboxListTile(
+            value: _selecionados.contains(p.idTipoAmbiente),
+            activeColor: AppColors.primary,
+            title: Text(p.nomePadrao, style: const TextStyle(fontSize: 14, color: AppColors.ink)),
+            subtitle: p.obrigatorio
+                ? const Text('Obrigatório', style: TextStyle(fontSize: 11, color: AppColors.warning, fontWeight: FontWeight.w700))
+                : null,
+            onChanged: (marcado) {
+              setState(() {
+                if (marcado == true) {
+                  _selecionados.add(p.idTipoAmbiente);
+                } else {
+                  _selecionados.remove(p.idTipoAmbiente);
+                }
+              });
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildListaAmbientes() {
+    if (_ambientesCriados.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: Text(
+            'Nenhum ambiente ainda. Toque em "Adicionar ambiente" pra começar.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: AppColors.muted, fontSize: 13),
+          ),
+        ),
+      );
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 90),
+      itemCount: _ambientesCriados.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (context, index) {
+        final ambiente = _ambientesCriados[index];
+        return _AmbienteCard(ambiente: ambiente, onTap: () => _abrirAmbiente(ambiente));
+      },
+    );
+  }
+}
+
+class _InfoHeader extends StatelessWidget {
+  const _InfoHeader({required this.levantamento, required this.qtdAuxiliares, required this.onTap});
+  final Levantamento levantamento;
+  final int qtdAuxiliares;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final temGps = levantamento.latAbertura != null && levantamento.longAbertura != null;
-    return Scaffold(
-      appBar: AppBar(title: Text(escola.nome)),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: AppColors.primarySoft,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.play_circle_outline, color: AppColors.primary, size: 22),
-                const SizedBox(width: 10),
-                const Expanded(
-                  child: Text(
-                    'Levantamento em andamento',
-                    style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.ink, fontSize: 14),
-                  ),
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        color: AppColors.primarySoft,
+        border: Border(bottom: BorderSide(color: AppColors.line)),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+          child: Row(
+            children: [
+              const Icon(Icons.play_circle_outline, color: AppColors.primary, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Aberto em ${_formatarData(levantamento.dataInicio)} · ${levantamento.tecnicoAbertura}'
+                  '${temGps ? '' : ' · sem GPS'}',
+                  style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.ink, fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          _InfoRow(label: 'Aberto em', value: _formatarData(levantamento.dataInicio)),
-          _InfoRow(label: 'Técnico', value: levantamento.tecnicoAbertura),
-          _InfoRow(
-            label: 'Localização',
-            value: temGps
-                ? '${levantamento.latAbertura!.toStringAsFixed(6)}, ${levantamento.longAbertura!.toStringAsFixed(6)}'
-                : 'Não capturada (sem GPS/permissão no momento da abertura)',
-          ),
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.line),
-            ),
-            child: Row(
-              children: const [
-                Icon(Icons.construction_rounded, color: AppColors.muted, size: 20),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Seleção de ambientes (com os ambientes padrão pré-marcados) chega na próxima etapa.',
-                    style: TextStyle(color: AppColors.muted, fontSize: 13),
-                  ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.people_outline, size: 14, color: qtdAuxiliares > 0 ? AppColors.primary : AppColors.muted),
+              const SizedBox(width: 3),
+              Text(
+                qtdAuxiliares > 0 ? '$qtdAuxiliares auxiliar${qtdAuxiliares == 1 ? '' : 'es'}' : 'Adicionar auxiliar',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                  color: qtdAuxiliares > 0 ? AppColors.primary : AppColors.muted,
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 2),
+              const Icon(Icons.chevron_right_rounded, size: 16, color: AppColors.muted),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -79,34 +455,69 @@ class LevantamentoScreen extends StatelessWidget {
     final dt = DateTime.tryParse(iso);
     if (dt == null) return iso;
     String dois(int n) => n.toString().padLeft(2, '0');
-    return '${dois(dt.day)}/${dois(dt.month)}/${dt.year} ${dois(dt.hour)}:${dois(dt.minute)}';
+    return '${dois(dt.day)}/${dois(dt.month)} ${dois(dt.hour)}:${dois(dt.minute)}';
   }
 }
 
-class _InfoRow extends StatelessWidget {
-  const _InfoRow({required this.label, required this.value});
-  final String label;
-  final String value;
+class _AmbienteCard extends StatelessWidget {
+  const _AmbienteCard({required this.ambiente, required this.onTap});
+  final Ambiente ambiente;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label.toUpperCase(),
-            style: const TextStyle(
-              fontWeight: FontWeight.w800,
-              fontSize: 11,
-              color: AppColors.muted,
-              letterSpacing: 0.5,
+    final vazio = ambiente.qtdEquipamentos == 0;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.line),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: AppColors.primarySoft,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                ambiente.origem == 'padrao' ? Icons.meeting_room_outlined : Icons.room_preferences_outlined,
+                color: AppColors.primary,
+                size: 20,
+              ),
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(value, style: const TextStyle(fontSize: 15, color: AppColors.ink)),
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    ambiente.nomeAmbiente,
+                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.ink),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    vazio
+                        ? 'Vazio — nenhum equipamento cadastrado'
+                        : '${ambiente.qtdEquipamentos} equipamento${ambiente.qtdEquipamentos == 1 ? '' : 's'}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: vazio ? AppColors.warning : AppColors.muted,
+                      fontWeight: vazio ? FontWeight.w700 : FontWeight.w400,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: AppColors.muted, size: 20),
+          ],
+        ),
       ),
     );
   }
