@@ -16,6 +16,13 @@ class Equipamento {
   final String? numSerie;
   final String? estado;
   final String? criadoPor;
+  final String? fotoEtiquetaUrl;
+  final String? fotoEquipamentoUrl;
+  // Caminho do arquivo LOCAL (neste aparelho) — nunca vai pro servidor, só
+  // existe até o FotoUploadService subir a foto e preencher a URL acima.
+  // Ver comentário de `_dbVersion = 3` em database.dart.
+  final String? fotoEtiquetaLocalPath;
+  final String? fotoEquipamentoLocalPath;
 
   const Equipamento({
     required this.id,
@@ -31,6 +38,10 @@ class Equipamento {
     this.numSerie,
     this.estado,
     this.criadoPor,
+    this.fotoEtiquetaUrl,
+    this.fotoEquipamentoUrl,
+    this.fotoEtiquetaLocalPath,
+    this.fotoEquipamentoLocalPath,
   });
 
   /// Modelo "efetivo" pra exibir — OUTRO_MODELO (texto livre) tem
@@ -56,6 +67,10 @@ class Equipamento {
       numSerie: row['num_serie'] as String?,
       estado: row['estado'] as String?,
       criadoPor: row['criado_por'] as String?,
+      fotoEtiquetaUrl: row['foto_etiqueta_url'] as String?,
+      fotoEquipamentoUrl: row['foto_equipamento_url'] as String?,
+      fotoEtiquetaLocalPath: row['foto_etiqueta_local_path'] as String?,
+      fotoEquipamentoLocalPath: row['foto_equipamento_local_path'] as String?,
     );
   }
 }
@@ -236,6 +251,8 @@ class EquipamentosRepository {
     String? tombamento,
     String? numSerie,
     String? estado,
+    String? fotoEtiquetaLocalPath,
+    String? fotoEquipamentoLocalPath,
     required String matricula,
   }) async {
     final db = await AppDatabase.instance.database;
@@ -259,6 +276,12 @@ class EquipamentosRepository {
           'tombamento': tombamento,
           'num_serie': numSerie,
           'estado': estado,
+          // Só a foto LOCAL é gravada aqui — a URL remota é escrita à parte
+          // por FotoUploadService depois do upload (ver comentário no
+          // model Equipamento). Passar null aqui simplesmente mantém "sem
+          // foto local ainda", nunca apaga uma URL já enviada.
+          'foto_etiqueta_local_path': fotoEtiquetaLocalPath,
+          'foto_equipamento_local_path': fotoEquipamentoLocalPath,
           'atualizado_em': agora,
           'sync_status': 'pending',
         },
@@ -278,6 +301,8 @@ class EquipamentosRepository {
         'tombamento': tombamento,
         'num_serie': numSerie,
         'estado': estado,
+        'foto_etiqueta_local_path': fotoEtiquetaLocalPath,
+        'foto_equipamento_local_path': fotoEquipamentoLocalPath,
         'criado_por': matricula,
         'criado_em': agora,
         'atualizado_em': agora,

@@ -1,18 +1,28 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../core/theme.dart';
 import '../../data/local/catalogo_repository.dart';
 import '../../data/local/equipamentos_repository.dart';
 import '../../data/remote/auth_service.dart';
+import 'barcode_scanner_screen.dart';
 import 'catalogo_picker_sheet.dart';
 import 'sugestoes_chips.dart';
 
 /// Tela 6 do spec — formulário de Equipamento (criar/editar), dentro de um
-/// Ambiente. Captura só texto neste incremento: leitura de código de barras
-/// (mobile_scanner), OCR de etiqueta (google_mlkit_text_recognition) e foto
-/// (image_picker) ficam de fora de propósito — são plugins mobile-only (não
-/// dá pra testar no build desktop atual) e ainda não existe pipeline de
-/// upload de foto no motor de sync (mandar caminho de arquivo local pro
-/// campo FOTO_*_URL corromperia o dado no servidor). Ver spec §9.
+/// Ambiente.
+///
+/// Captura de foto/código de barras/OCR (2026-09-12): foto (image_picker),
+/// leitura de código de barras (mobile_scanner) e OCR de etiqueta
+/// (google_mlkit_text_recognition) são plugins mobile-only — sem
+/// implementação no Windows/Linux/macOS, então só dá pra testar de verdade
+/// num Android (emulador ou aparelho); no build desktop os botões de câmera
+/// existem mas não vão funcionar. A foto em si nunca exige internet — só
+/// grava um caminho local (ver `EquipamentosRepository`/`database.dart`
+/// v3); quem sobe pro Drive de fato é o `FotoUploadService`, rodado a cada
+/// sincronização (ver `SyncEngine`).
 ///
 /// [catalogoInicial] pré-preenche Tipo/Marca/Modelo quando a tela é aberta
 /// já com um item escolhido no catálogo (fluxo "catálogo primeiro" a partir
@@ -42,6 +52,7 @@ class EquipamentoFormScreen extends StatefulWidget {
 
 class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
   final _repo = EquipamentosRepository();
+  final _picker = ImagePicker();
 
   late final _tipoController = TextEditingController(
     text: widget.existente?.tipoEquipamento ?? widget.catalogoInicial?.tipoEquipamento ?? '',
@@ -56,6 +67,11 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
   late final _numSerieController = TextEditingController(text: widget.existente?.numSerie ?? '');
   String? _estado = '';
 
+  String? _fotoEtiquetaPath;
+  String? _fotoEquipamentoPath;
+  List<String> _linhasOcr = const [];
+  bool _reconhecendoTexto = false;
+
   bool _salvando = false;
 
   bool get _editando => widget.existente != null;
@@ -68,6 +84,8 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
     // bom estado, então isso poupa um toque repetido; editar um já
     // existente sempre respeita o que já estava salvo (mesmo que vazio).
     _estado = widget.existente?.estado ?? 'Bom';
+    _fotoEtiquetaPath = widget.existente?.fotoEtiquetaLocalPath;
+    _fotoEquipamentoPath = widget.existente?.fotoEquipamentoLocalPath;
   }
 
   @override
@@ -90,6 +108,93 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
       _modeloController.text = item.modelo ?? '';
     });
   }
+
+  // -- Foto / OCR / código de barras --------------------------------------
+
+  Future<void> _tirarFoto({required bool etiqueta}) async {
+    final XFile? arquivo = await _picker.pickImage(
+      source: ImageSource.camera,
+      maxWidth: 1600,
+      imageQuality: 85,
+    );
+    if (arquivo == null || !mounted) return;
+    setState(() {
+      if (etiqueta) {
+        _fotoEtiquetaPath = arquivo.path;
+        _linhasOcr = const [];
+      } else {
+        _fotoEquipamentoPath = arquivo.path;
+      }
+    });
+    // OCR só faz sentido na foto da etiqueta (é onde ficam tombamento/série
+    // impressos) — a foto do equipamento em si não passa por reconhecimento
+    // de texto nenhum.
+    if (etiqueta) {
+      await _rodarOcr(arquivo.path);
+    }
+  }
+
+  void _removerFoto({required bool etiqueta}) {
+    setState(() {
+      if (etiqueta) {
+        _fotoEtiquetaPath = null;
+        _linhasOcr = const [];
+      } else {
+        _fotoEquipamentoPath = null;
+      }
+    });
+  }
+
+  /// Roda OCR sobre a foto da etiqueta e junta as linhas de texto
+  /// reconhecidas — mostradas depois como chips que o técnico toca pra
+  /// preencher Tombamento ou Nº de Série (ver [_usarTextoOcr]), sem tentar
+  /// adivinhar sozinho qual linha é qual (etiquetas variam demais de escola
+  /// pra escola pra confiar num "auto-preenchimento"). Falha de OCR nunca
+  /// bloqueia o formulário — é só uma ajuda a mais; sem ela, o técnico
+  /// preenche os campos manualmente do mesmo jeito de sempre.
+  Future<void> _rodarOcr(String caminho) async {
+    setState(() => _reconhecendoTexto = true);
+    try {
+      final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
+      final resultado = await recognizer.processImage(InputImage.fromFilePath(caminho));
+      await recognizer.close();
+
+      final linhas = <String>[];
+      for (final bloco in resultado.blocks) {
+        for (final linha in bloco.lines) {
+          final texto = linha.text.trim();
+          if (texto.isNotEmpty && !linhas.contains(texto)) linhas.add(texto);
+        }
+      }
+      if (!mounted) return;
+      setState(() => _linhasOcr = linhas);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _linhasOcr = const []);
+    } finally {
+      if (mounted) setState(() => _reconhecendoTexto = false);
+    }
+  }
+
+  void _usarTextoOcr(String texto, {required bool numSerie}) {
+    setState(() {
+      if (numSerie) {
+        _numSerieController.text = texto;
+      } else {
+        _tombamentoController.text = texto;
+      }
+    });
+  }
+
+  Future<void> _abrirScanner() async {
+    final codigo = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()),
+    );
+    if (codigo == null || !mounted) return;
+    setState(() => _tombamentoController.text = codigo);
+  }
+
+  // -- Duplicidade / salvar -------------------------------------------------
 
   Future<bool> _confirmarSeDuplicado() async {
     final achados = await _repo.verificarDuplicidade(
@@ -148,6 +253,8 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
       tombamento: _tombamentoController.text.trim().isEmpty ? null : _tombamentoController.text.trim(),
       numSerie: _numSerieController.text.trim().isEmpty ? null : _numSerieController.text.trim(),
       estado: _estado,
+      fotoEtiquetaLocalPath: _fotoEtiquetaPath,
+      fotoEquipamentoLocalPath: _fotoEquipamentoPath,
       matricula: widget.session.matricula,
     );
     if (!mounted) return;
@@ -197,14 +304,62 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
           TextField(controller: _modeloController, textCapitalization: TextCapitalization.words),
           const SizedBox(height: 16),
 
+          _buildFotoTile(
+            titulo: 'FOTO DA ETIQUETA',
+            caminho: _fotoEtiquetaPath,
+            onTirar: () => _tirarFoto(etiqueta: true),
+            onRemover: () => _removerFoto(etiqueta: true),
+          ),
+          if (_reconhecendoTexto)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Row(
+                children: [
+                  SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                  SizedBox(width: 8),
+                  Text('Lendo texto da etiqueta...', style: TextStyle(color: AppColors.muted, fontSize: 12)),
+                ],
+              ),
+            ),
+          _buildOcrChips(),
+          const SizedBox(height: 16),
+
           const Text('TOMBAMENTO', style: _labelStyle),
           const SizedBox(height: 6),
-          TextField(controller: _tombamentoController, textCapitalization: TextCapitalization.characters),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _tombamentoController,
+                  textCapitalization: TextCapitalization.characters,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Material(
+                color: AppColors.primarySoft,
+                borderRadius: BorderRadius.circular(10),
+                child: IconButton(
+                  onPressed: _abrirScanner,
+                  icon: const Icon(Icons.qr_code_scanner, size: 20, color: AppColors.primary),
+                  tooltip: 'Ler código de barras',
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 16),
 
           const Text('Nº DE SÉRIE', style: _labelStyle),
           const SizedBox(height: 6),
           TextField(controller: _numSerieController, textCapitalization: TextCapitalization.characters),
+          const SizedBox(height: 16),
+
+          _buildFotoTile(
+            titulo: 'FOTO DO EQUIPAMENTO',
+            caminho: _fotoEquipamentoPath,
+            onTirar: () => _tirarFoto(etiqueta: false),
+            onRemover: () => _removerFoto(etiqueta: false),
+          ),
           const SizedBox(height: 16),
 
           const Text('ESTADO DE CONSERVAÇÃO', style: _labelStyle),
@@ -237,6 +392,109 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildFotoTile({
+    required String titulo,
+    required String? caminho,
+    required VoidCallback onTirar,
+    required VoidCallback onRemover,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(titulo, style: _labelStyle),
+        const SizedBox(height: 6),
+        if (caminho == null)
+          OutlinedButton.icon(
+            onPressed: onTirar,
+            icon: const Icon(Icons.camera_alt_outlined, size: 18),
+            label: const Text('Tirar foto'),
+          )
+        else
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Stack(
+              children: [
+                Image.file(
+                  File(caminho),
+                  height: 140,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  // Se o arquivo tiver sumido (ex: cache do sistema
+                  // limpo), mostra um placeholder em vez de quebrar a
+                  // tela — a pessoa só tira a foto de novo.
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    height: 140,
+                    color: AppColors.surface,
+                    alignment: Alignment.center,
+                    child: const Text(
+                      'Foto não encontrada — tire outra',
+                      style: TextStyle(color: AppColors.muted, fontSize: 12),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: Row(
+                    children: [
+                      _miniIconButton(icon: Icons.refresh, tooltip: 'Tirar outra', onPressed: onTirar),
+                      const SizedBox(width: 4),
+                      _miniIconButton(icon: Icons.close, tooltip: 'Remover', onPressed: onRemover),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _miniIconButton({required IconData icon, required String tooltip, required VoidCallback onPressed}) {
+    return Material(
+      color: Colors.black.withOpacity(0.55),
+      shape: const CircleBorder(),
+      child: IconButton(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 16, color: Colors.white),
+        tooltip: tooltip,
+        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+        padding: EdgeInsets.zero,
+      ),
+    );
+  }
+
+  Widget _buildOcrChips() {
+    if (_linhasOcr.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Texto lido na etiqueta — toque pra usar como Tombamento, ou na setinha pra usar como Nº de Série:',
+            style: TextStyle(color: AppColors.muted, fontSize: 11),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: _linhasOcr
+                .map(
+                  (linha) => InputChip(
+                    label: Text(linha, style: const TextStyle(fontSize: 12)),
+                    onPressed: () => _usarTextoOcr(linha, numSerie: false),
+                    deleteIcon: const Icon(Icons.arrow_forward, size: 14),
+                    onDeleted: () => _usarTextoOcr(linha, numSerie: true),
+                  ),
+                )
+                .toList(),
+          ),
+        ],
       ),
     );
   }

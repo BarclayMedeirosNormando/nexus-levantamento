@@ -1,12 +1,14 @@
+import 'dart:async';
+
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import '../../core/route_observer.dart';
 import '../../core/theme.dart';
 import '../../data/local/escolas_repository.dart';
 import '../../data/local/levantamentos_repository.dart';
-import '../../data/levantamento_sync_service.dart';
 import '../../data/remote/api_client.dart';
 import '../../data/remote/auth_service.dart';
-import '../../data/sync_service.dart';
+import '../../data/sync_engine.dart';
 import '../auth/login_screen.dart';
 import '../catalogo/catalogo_modelos_screen.dart';
 import '../escola/escola_detail_screen.dart';
@@ -36,8 +38,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with RouteAware {
-  final _syncService = SyncService();
-  final _levantamentoSyncService = LevantamentoSyncService();
+  final _syncEngine = SyncEngine();
   final _escolasRepo = EscolasRepository();
   final _levantamentosRepo = LevantamentosRepository();
   final _buscaController = TextEditingController();
@@ -49,6 +50,9 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   List<Escola> _resultadosBusca = const [];
   List<LevantamentoComEscola> _emAndamento = const [];
 
+  StreamSubscription<List<ConnectivityResult>>? _conectividadeSub;
+  bool _estavaOffline = false;
+
   // Muda a cada sync bem-sucedido, pra forçar a árvore de regionais (que
   // carrega uma vez no initState dela) a recarregar com dados novos.
   Key _arvoreKey = UniqueKey();
@@ -58,6 +62,27 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     super.initState();
     _buscaController.addListener(_onBuscaChanged);
     _carregarEmAndamento();
+    _observarConectividade();
+  }
+
+  /// Dispara uma sincronização assim que a conexão volta (2026-09-12) —
+  /// sem esperar o próximo ciclo do sync em background (workmanager,
+  /// mínimo 15 min imposto pela plataforma), cobrindo o caso mais comum:
+  /// o app já está aberto e o Wi-Fi/dados voltam no meio do trabalho. Só
+  /// dispara na TRANSIÇÃO offline→online (não a cada evento — alguns
+  /// aparelhos disparam `onConnectivityChanged` com frequência mesmo sem
+  /// mudança real de conectividade). `mostrarErro: false` porque isso roda
+  /// sem o técnico ter pedido — um erro nesse sync automático não precisa
+  /// virar um alerta vermelho na tela, só o próximo sync (manual ou
+  /// automático) tenta de novo.
+  void _observarConectividade() {
+    _conectividadeSub = Connectivity().onConnectivityChanged.listen((resultados) {
+      final online = resultados.any((r) => r != ConnectivityResult.none);
+      if (online && _estavaOffline && !_syncing) {
+        _sincronizar(mostrarErro: false);
+      }
+      _estavaOffline = !online;
+    });
   }
 
   @override
@@ -74,6 +99,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     routeObserver.unsubscribe(this);
     _buscaController.removeListener(_onBuscaChanged);
     _buscaController.dispose();
+    _conectividadeSub?.cancel();
     super.dispose();
   }
 
@@ -120,20 +146,23 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     });
   }
 
-  Future<void> _sincronizar() async {
+  /// [mostrarErro] fica `false` quando quem chamou foi o listener de
+  /// reconectividade (ver [_observarConectividade]) — um sync que ninguém
+  /// pediu não precisa virar alerta vermelho na tela se falhar; o botão
+  /// manual (padrão `true`) sempre mostra.
+  Future<void> _sincronizar({bool mostrarErro = true}) async {
     setState(() {
       _syncing = true;
       _erroSync = null;
     });
     try {
-      // Ordem importa: sobe primeiro o que este aparelho tem pendente —
-      // antes de puxar referência/levantamentos ativos, pra não correr o
-      // risco de um pull trazer de volta algo desatualizado por cima do
-      // que ainda não tinha sido enviado (ver regra de conflito em
-      // LevantamentoSyncService, §5b/§6 do spec).
-      final push = await _levantamentoSyncService.pushPendentes(widget.session);
-      await _syncService.pullReferencia(widget.session);
-      final pull = await _levantamentoSyncService.pullLevantamentosAtivos(widget.session);
+      // Ordem de cada passo importa — ver SyncEngine.sincronizarTudo: fotos
+      // pendentes primeiro (pra já ir a URL se der tempo), depois sobe o
+      // que este aparelho tem pendente, antes de puxar referência/
+      // levantamentos ativos (pra não correr o risco de um pull trazer de
+      // volta algo desatualizado por cima do que ainda não tinha sido
+      // enviado — ver regra de conflito em LevantamentoSyncService).
+      final resultado = await _syncEngine.sincronizarTudo(widget.session);
 
       if (!mounted) return;
       setState(() => _arvoreKey = UniqueKey());
@@ -147,14 +176,19 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
 
       if (!mounted) return;
       final partes = <String>[];
-      if (push.levantamentosEnviados > 0) {
+      if (resultado.push.levantamentosEnviados > 0) {
         partes.add(
-          '${push.levantamentosEnviados} levantamento${push.levantamentosEnviados == 1 ? '' : 's'} enviado${push.levantamentosEnviados == 1 ? '' : 's'}',
+          '${resultado.push.levantamentosEnviados} levantamento${resultado.push.levantamentosEnviados == 1 ? '' : 's'} enviado${resultado.push.levantamentosEnviados == 1 ? '' : 's'}',
         );
       }
-      if (pull.levantamentos > 0) {
+      if (resultado.pull.levantamentos > 0) {
         partes.add(
-          '${pull.levantamentos} levantamento${pull.levantamentos == 1 ? '' : 's'} baixado${pull.levantamentos == 1 ? '' : 's'}',
+          '${resultado.pull.levantamentos} levantamento${resultado.pull.levantamentos == 1 ? '' : 's'} baixado${resultado.pull.levantamentos == 1 ? '' : 's'}',
+        );
+      }
+      if (resultado.fotosEnviadas > 0) {
+        partes.add(
+          '${resultado.fotosEnviadas} foto${resultado.fotosEnviadas == 1 ? '' : 's'} enviada${resultado.fotosEnviadas == 1 ? '' : 's'}',
         );
       }
       if (partes.isNotEmpty) {
@@ -162,14 +196,14 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
       }
     } on ApiException catch (e) {
       if (!mounted) return;
-      setState(() => _erroSync = e.message);
+      if (mostrarErro) setState(() => _erroSync = e.message);
     } catch (e) {
       // Qualquer erro fora do ApiException (ex: gravação local) também
       // precisa aparecer — nunca falhar silenciosamente (ver §14 do spec).
       // ignore: avoid_print
       print('Erro inesperado ao sincronizar: $e');
       if (!mounted) return;
-      setState(() => _erroSync = 'Erro inesperado: $e');
+      if (mostrarErro) setState(() => _erroSync = 'Erro inesperado: $e');
     } finally {
       if (mounted) setState(() => _syncing = false);
     }

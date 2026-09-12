@@ -28,7 +28,15 @@ class AppDatabase {
   // decidiu" de "decidiu não ter ambiente nenhum" — a tela voltava a
   // mostrar a seleção pra sempre. Ver LevantamentosRepository/
   // LevantamentoScreen.
-  static const _dbVersion = 2;
+  // v3 (2026-09-12): adiciona `equipamentos.foto_etiqueta_local_path` e
+  // `equipamentos.foto_equipamento_local_path` — caminho do arquivo LOCAL
+  // da foto recém-tirada, antes de ter sido enviada pro Drive. São
+  // colunas só do aparelho (nunca vão no push_levantamento nem existem no
+  // backend): `foto_etiqueta_url`/`foto_equipamento_url` (que já existiam)
+  // continuam sendo a URL remota, só preenchida depois que FotoUploadService
+  // sobe a foto — mesma filosofia offline-first do resto do app: tirar a
+  // foto nunca exige internet na hora, só o upload (que roda no sync).
+  static const _dbVersion = 3;
 
   Database? _db;
 
@@ -68,6 +76,10 @@ class AppDatabase {
           await db.execute(
             'ALTER TABLE levantamentos ADD COLUMN ambientes_selecao_feita INTEGER NOT NULL DEFAULT 0',
           );
+        }
+        if (oldVersion < 3) {
+          await db.execute('ALTER TABLE equipamentos ADD COLUMN foto_etiqueta_local_path TEXT');
+          await db.execute('ALTER TABLE equipamentos ADD COLUMN foto_equipamento_local_path TEXT');
         }
       },
     );
@@ -188,6 +200,8 @@ class AppDatabase {
         num_serie TEXT,
         foto_etiqueta_url TEXT,
         foto_equipamento_url TEXT,
+        foto_etiqueta_local_path TEXT,
+        foto_equipamento_local_path TEXT,
         estado TEXT,
         chave_modelo TEXT,
         criado_por TEXT,

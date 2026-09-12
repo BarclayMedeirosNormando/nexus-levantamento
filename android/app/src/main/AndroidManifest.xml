@@ -1,4 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Câmera: foto de etiqueta/equipamento (image_picker) e leitura de
+         código de barras (mobile_scanner) em equipamento_form_screen.dart,
+         2026-09-12. required="false" pra não excluir da Play Store
+         aparelhos sem câmera (não deveria existir em campo, mas por
+         garantia). -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application
         android:label="nexus_levantamento"
         android:name="${applicationName}"
