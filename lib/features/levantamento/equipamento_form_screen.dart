@@ -63,7 +63,11 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
   @override
   void initState() {
     super.initState();
-    _estado = widget.existente?.estado;
+    // Equipamento novo já começa com "Bom" pré-selecionado (pedido do
+    // usuário, 2026-09-12) — a maioria dos equipamentos levantados está em
+    // bom estado, então isso poupa um toque repetido; editar um já
+    // existente sempre respeita o que já estava salvo (mesmo que vazio).
+    _estado = widget.existente?.estado ?? 'Bom';
   }
 
   @override

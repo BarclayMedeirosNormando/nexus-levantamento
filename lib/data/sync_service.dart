@@ -65,10 +65,18 @@ class SyncService {
         }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
 
+      // Desde 2026-09-12, `servidores` traz a aba SERVIDORES inteira (~26-29
+      // mil linhas — antes só vinha quem tinha LOGIN_HABILITADO/PODE_ASSINAR,
+      // ver actionPullReferencia no backend), pra Tela 8/Conclusão poder
+      // escolher qualquer responsável 100% offline. Usa `Batch` em vez de um
+      // `await txn.insert(...)` por linha: bem mais rápido pra esse volume,
+      // já que enfileira tudo e manda pro banco de uma vez só no commit,
+      // sem uma ida-e-volta (await) por linha.
       await txn.delete('servidores');
+      final batchServidores = txn.batch();
       for (final s in servidores) {
         final m = s as Map<String, dynamic>;
-        await txn.insert('servidores', {
+        batchServidores.insert('servidores', {
           'matricula': m['MATRICULA']?.toString() ?? '',
           'nome': m['NOME']?.toString() ?? '',
           'pode_assinar': (m['PODE_ASSINAR'] == true) ? 1 : 0,
@@ -76,6 +84,7 @@ class SyncService {
           'papel': m['PAPEL']?.toString(),
         }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
+      await batchServidores.commit(noResult: true);
 
       await txn.delete('contratos_internet');
       for (final c in contratos) {

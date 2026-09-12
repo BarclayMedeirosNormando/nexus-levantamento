@@ -4,18 +4,17 @@ import '../../data/local/catalogo_repository.dart';
 import '../../data/remote/auth_service.dart';
 import '../catalogo/modelo_form_screen.dart';
 
-/// Resultado de [showCatalogoPickerSheet]: ou a pessoa escolheu um item do
-/// catálogo ([CatalogoPickerResult.selecionado]), ou preferiu não usar o
-/// catálogo e digitar na mão ([CatalogoPickerResult.manual] — o formulário
-/// de Equipamento simplesmente fica em branco, igual já era o comportamento
-/// antes desta feature). `null` (sheet fechado sem escolher nada, ex: botão
-/// voltar do Android) significa "cancelou a criação do equipamento".
+/// Resultado de [showCatalogoPickerSheet]: a pessoa escolheu um item do
+/// catálogo ([CatalogoPickerResult.selecionado]). `null` (sheet fechado sem
+/// escolher nada, ex: botão voltar do Android, ou "X") significa "cancelou
+/// a criação do equipamento" — decisão de 2026-09-12: não existe mais opção
+/// de digitar sem catálogo; se o modelo não existe ainda, o caminho é
+/// "Criar modelo" (ver botão abaixo), não digitar solto.
 class CatalogoPickerResult {
-  final CatalogoItem? item;
+  final CatalogoItem item;
   const CatalogoPickerResult._(this.item);
 
   factory CatalogoPickerResult.selecionado(CatalogoItem item) => CatalogoPickerResult._(item);
-  factory CatalogoPickerResult.manual() => const CatalogoPickerResult._(null);
 }
 
 /// Bottom sheet compartilhado de busca no catálogo. Usado em dois lugares:
@@ -24,6 +23,14 @@ class CatalogoPickerResult {
 /// caso é o fluxo "catálogo primeiro" pedido: ao incluir um equipamento num
 /// ambiente, busca nessa área antes de abrir o formulário; se o modelo não
 /// existir ainda, "Criar modelo" cadastra ali mesmo, sem sair do fluxo.
+///
+/// Chips de filtro por Tipo (2026-09-12, pedido do usuário — "desktops abre
+/// o que se tem e vai abrindo até achar ou não"): tocar num tipo (mesma
+/// lista de `CatalogoRepository.tiposSugeridos`) restringe a lista aos
+/// modelos já cadastrados daquele tipo, pra navegar/rolar até achar (ou
+/// concluir que não existe e criar um novo, já com o Tipo pré-preenchido).
+/// O campo de texto continua funcionando junto, filtrando marca/modelo
+/// dentro do tipo escolhido.
 Future<CatalogoPickerResult?> showCatalogoPickerSheet({
   required BuildContext context,
   required Session session,
@@ -48,6 +55,7 @@ class _CatalogoPickerSheet extends StatefulWidget {
 class _CatalogoPickerSheetState extends State<_CatalogoPickerSheet> {
   final _repo = CatalogoRepository();
   final _queryController = TextEditingController();
+  String? _tipoSelecionado;
   List<CatalogoItem> _resultados = const [];
   bool _carregando = true;
 
@@ -65,12 +73,17 @@ class _CatalogoPickerSheetState extends State<_CatalogoPickerSheet> {
 
   Future<void> _buscar(String query) async {
     setState(() => _carregando = true);
-    final resultados = await _repo.buscar(query);
+    final resultados = await _repo.buscar(query, tipo: _tipoSelecionado);
     if (!mounted) return;
     setState(() {
       _resultados = resultados;
       _carregando = false;
     });
+  }
+
+  void _alternarTipo(String tipo) {
+    setState(() => _tipoSelecionado = _tipoSelecionado == tipo ? null : tipo);
+    _buscar(_queryController.text);
   }
 
   Future<void> _abrirCriarModelo() async {
@@ -80,7 +93,10 @@ class _CatalogoPickerSheetState extends State<_CatalogoPickerSheet> {
     // criado, fecha o sheet inteiro já com o resultado.
     final resultado = await Navigator.of(context).push<ModeloFormResultado>(
       MaterialPageRoute(
-        builder: (_) => ModeloFormScreen(session: widget.session, tipoInicial: _queryController.text),
+        builder: (_) => ModeloFormScreen(
+          session: widget.session,
+          tipoInicial: _tipoSelecionado ?? _queryController.text,
+        ),
       ),
     );
     if (resultado == null || !mounted) return;
@@ -123,26 +139,37 @@ class _CatalogoPickerSheetState extends State<_CatalogoPickerSheet> {
                 ),
               ),
               const SizedBox(height: 10),
+              // Wrap em vez de lista horizontal (decisão de 2026-09-12): com
+              // scroll horizontal, os últimos tipos ("Rack", "Outro" etc.)
+              // ficavam cortados fora da tela sem indicação nenhuma de que
+              // dava pra rolar — a pessoa via só até "Switch"/"R..." e achava
+              // que era só aquilo. Com Wrap, quebra em quantas linhas forem
+              // necessárias e todos os chips ficam visíveis de uma vez.
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => Navigator.of(context).pop(CatalogoPickerResult.manual()),
-                        icon: const Icon(Icons.edit_outlined, size: 16),
-                        label: const Text('Digitar sem catálogo'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: _abrirCriarModelo,
-                        icon: const Icon(Icons.add, size: 16),
-                        label: const Text('Criar modelo'),
-                      ),
-                    ),
-                  ],
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: CatalogoRepository.tiposSugeridos.map((tipo) {
+                    final selecionado = _tipoSelecionado == tipo;
+                    return ChoiceChip(
+                      label: Text(tipo),
+                      selected: selecionado,
+                      onSelected: (_) => _alternarTipo(tipo),
+                    );
+                  }).toList(),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _abrirCriarModelo,
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('Criar modelo'),
+                  ),
                 ),
               ),
               const SizedBox(height: 8),
@@ -154,7 +181,7 @@ class _CatalogoPickerSheetState extends State<_CatalogoPickerSheet> {
                             child: Padding(
                               padding: EdgeInsets.all(24),
                               child: Text(
-                                'Nada encontrado no catálogo pra esse termo. Toque em "Criar modelo" pra cadastrar um novo.',
+                                'Nada encontrado no catálogo pra esse filtro. Toque em "Criar modelo" pra cadastrar um novo.',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(color: AppColors.muted, fontSize: 13),
                               ),
