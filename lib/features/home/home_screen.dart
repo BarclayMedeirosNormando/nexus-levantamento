@@ -12,8 +12,8 @@ import '../../data/sync_engine.dart';
 import '../auth/login_screen.dart';
 import '../catalogo/catalogo_modelos_screen.dart';
 import '../escola/escola_detail_screen.dart';
-import '../levantamento/levantamento_screen.dart';
 import 'escola_card.dart';
+import 'levantamentos_lista_screen.dart';
 import 'regionais_screen.dart';
 
 /// "Minhas Escolas". Dois modos, decididos pelo campo de busca:
@@ -23,9 +23,11 @@ import 'regionais_screen.dart';
 /// - **Busca preenchida**: lista plana filtrada por nome/INEP/município,
 ///   ignorando a árvore (a pessoa já sabe o que procura).
 ///
-/// Acima de tudo isso, sempre visível quando existir: a seção
-/// "Levantamentos em andamento" (§5 Tela 2 do spec) — o que ficou pra trás,
-/// sem precisar navegar pela árvore de novo pra achar.
+/// Acima de tudo isso, sempre visível: a linha de cartões-resumo (§5 Tela 2
+/// do spec, ampliada 2026-09-12) — "Em andamento", "Concluídos" (só ADM) e
+/// "Pendentes de sync", cada um abrindo a lista cheia correspondente (ver
+/// `levantamentos_lista_screen.dart`) — o que ficou pra trás ou ainda não
+/// subiu pro servidor, sem precisar navegar pela árvore de novo pra achar.
 ///
 /// ESCOLAS é tabela de referência, só leitura no app (ver §4/§9 do spec) —
 /// tudo aqui lê do SQLite local, sync é só o botão/ícone pra atualizar.
@@ -45,10 +47,12 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
 
   bool _syncing = false;
   bool _carregandoBusca = false;
-  bool _carregandoEmAndamento = true;
+  bool _carregandoResumo = true;
   String? _erroSync;
   List<Escola> _resultadosBusca = const [];
   List<LevantamentoComEscola> _emAndamento = const [];
+  List<LevantamentoComEscola> _concluidos = const [];
+  PendenciasResumo? _pendencias;
 
   StreamSubscription<List<ConnectivityResult>>? _conectividadeSub;
   bool _estavaOffline = false;
@@ -61,7 +65,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   void initState() {
     super.initState();
     _buscaController.addListener(_onBuscaChanged);
-    _carregarEmAndamento();
+    _carregarResumo();
     _observarConectividade();
   }
 
@@ -105,23 +109,41 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
 
   // Chamado pelo RouteObserver toda vez que voltamos pra Home depois de
   // empilhar outra tela (ex.: abrir uma escola, abrir/continuar um
-  // levantamento, voltar da seleção de ambientes) — mantém a lista de
-  // "em andamento" sempre batendo com o que existe agora, sem depender de
-  // um botão manual de atualizar.
+  // levantamento, voltar da seleção de ambientes) — mantém os cartões-resumo
+  // (em andamento/concluídos/pendências) sempre batendo com o que existe
+  // agora, sem depender de um botão manual de atualizar.
   @override
   void didPopNext() {
-    _carregarEmAndamento();
+    _carregarResumo();
   }
 
-  Future<void> _carregarEmAndamento() async {
-    final lista = await _levantamentosRepo.listarEmAndamento(
+  /// Carrega os três números dos cartões-resumo da Home (2026-09-12,
+  /// pedido do usuário pra deixar a tela inicial "mais funcional"): quantos
+  /// levantamentos estão em andamento, quantos concluídos (só ADM enxerga —
+  /// mesma regra de visibilidade de sempre) e quantas pendências de sync
+  /// (levantamentos com dado não enviado + fotos não enviadas) ainda
+  /// existem neste aparelho. Os três são só leitura local — nunca chamam a
+  /// rede — então pode rodar toda vez que a Home reaparece sem custo.
+  Future<void> _carregarResumo() async {
+    // Três leituras SEQUENCIAIS de propósito (não `Future.wait`) — são só
+    // consultas locais no SQLite (nunca rede), o custo de encadear é
+    // desprezível, e evita qualquer ambiguidade de tipo ao misturar
+    // `Future<List<...>>` com `Future<PendenciasResumo>` numa lista só.
+    final emAndamento = await _levantamentosRepo.listarEmAndamento(
       matricula: widget.session.matricula,
       isAdm: widget.session.isAdm,
     );
+    final concluidos = await _levantamentosRepo.listarConcluidos(
+      matricula: widget.session.matricula,
+      isAdm: widget.session.isAdm,
+    );
+    final pendencias = await _syncEngine.contarPendencias();
     if (!mounted) return;
     setState(() {
-      _emAndamento = lista;
-      _carregandoEmAndamento = false;
+      _emAndamento = emAndamento;
+      _concluidos = concluidos;
+      _pendencias = pendencias;
+      _carregandoResumo = false;
     });
   }
 
@@ -171,8 +193,10 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
       }
       // Um levantamento onde este usuário foi adicionado como auxiliar por
       // outro técnico só aparece aqui depois desse pull — recarrega pra
-      // refletir na hora, sem precisar reabrir a Home.
-      await _carregarEmAndamento();
+      // refletir na hora, sem precisar reabrir a Home. Também atualiza
+      // concluídos/pendências, já que um sync bem-sucedido normalmente zera
+      // (ou reduz) as pendências mostradas nos cartões.
+      await _carregarResumo();
 
       if (!mounted) return;
       final partes = <String>[];
@@ -215,18 +239,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
       (route) => false,
-    );
-  }
-
-  void _abrirLevantamentoEmAndamento(LevantamentoComEscola item) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => LevantamentoScreen(
-          escola: item.escola,
-          levantamento: item.levantamento,
-          session: widget.session,
-        ),
-      ),
     );
   }
 
@@ -287,7 +299,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
               ],
             ),
           ),
-          if (!_carregandoEmAndamento && _emAndamento.isNotEmpty) _buildEmAndamento(),
+          if (!_carregandoResumo) _buildResumoCards(),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: TextField(
@@ -341,71 +353,78 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     );
   }
 
-  Widget _buildEmAndamento() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.warning.withOpacity(0.4)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.hourglass_top_rounded, size: 16, color: AppColors.warning),
-              const SizedBox(width: 6),
-              Text(
-                'Levantamentos em andamento (${_emAndamento.length})',
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: AppColors.ink),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ..._emAndamento.map(
-            (item) => Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: InkWell(
-                onTap: () => _abrirLevantamentoEmAndamento(item),
-                borderRadius: BorderRadius.circular(10),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              item.escola.nome,
-                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.ink),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            if (item.escola.municipio != null)
-                              Text(
-                                item.escola.municipio!,
-                                style: const TextStyle(fontSize: 11, color: AppColors.muted),
-                              ),
-                          ],
-                        ),
-                      ),
-                      if (widget.session.isAdm && item.levantamento.tecnicoAbertura.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: Text(
-                            item.levantamento.tecnicoAbertura,
-                            style: const TextStyle(fontSize: 11, color: AppColors.muted),
-                          ),
-                        ),
-                      const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.muted),
-                    ],
+  /// Cartões-resumo (2026-09-12) — substituem a antiga lista "Levantamentos
+  /// em andamento" embutida direto na Home (que só existia quando não-vazia
+  /// e mostrava tudo inline, sem limite) por três números sempre visíveis:
+  /// em andamento, concluídos (só ADM — mesma regra de sempre) e pendências
+  /// de sync. Cada um, quando tem algo, é clicável: os dois primeiros abrem
+  /// [LevantamentosListaScreen] com a lista cheia (onde cada item já abre o
+  /// levantamento normalmente, igual antes); "Pendentes de sync" dispara o
+  /// mesmo sync manual do botão da AppBar — é a ação óbvia pra resolver
+  /// aquele número.
+  Widget _buildResumoCards() {
+    final pendentes = _pendencias?.total ?? 0;
+
+    final cards = <Widget>[
+      _ResumoCard(
+        icon: Icons.hourglass_top_rounded,
+        cor: AppColors.warning,
+        rotulo: 'Em andamento',
+        valor: _emAndamento.length,
+        onTap: _emAndamento.isEmpty
+            ? null
+            : () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => LevantamentosListaScreen(
+                      titulo: 'Em andamento',
+                      itens: _emAndamento,
+                      session: widget.session,
+                    ),
                   ),
                 ),
-              ),
-            ),
-          ),
+      ),
+    ];
+
+    if (widget.session.isAdm) {
+      cards.add(
+        _ResumoCard(
+          icon: Icons.check_circle_outline_rounded,
+          cor: AppColors.primary,
+          rotulo: 'Concluídos',
+          valor: _concluidos.length,
+          onTap: _concluidos.isEmpty
+              ? null
+              : () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => LevantamentosListaScreen(
+                        titulo: 'Concluídos',
+                        itens: _concluidos,
+                        session: widget.session,
+                      ),
+                    ),
+                  ),
+        ),
+      );
+    }
+
+    cards.add(
+      _ResumoCard(
+        icon: pendentes > 0 ? Icons.cloud_off_rounded : Icons.cloud_done_rounded,
+        cor: pendentes > 0 ? AppColors.danger : AppColors.muted,
+        rotulo: 'Pendentes de sync',
+        valor: pendentes,
+        onTap: (pendentes > 0 && !_syncing) ? _sincronizar : null,
+      ),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+      child: Row(
+        children: [
+          for (var i = 0; i < cards.length; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            Expanded(child: cards[i]),
+          ],
         ],
       ),
     );
@@ -444,6 +463,61 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
           },
         );
       },
+    );
+  }
+}
+
+/// Um dos cartões da linha-resumo do topo da Home (ver
+/// `_HomeScreenState._buildResumoCards`) — só apresentação, sem estado
+/// próprio. `onTap` nulo desabilita visualmente o toque (não faz sentido
+/// abrir uma lista vazia).
+class _ResumoCard extends StatelessWidget {
+  const _ResumoCard({
+    required this.icon,
+    required this.cor,
+    required this.rotulo,
+    required this.valor,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color cor;
+  final String rotulo;
+  final int valor;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: cor.withOpacity(0.35)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: cor),
+            const SizedBox(height: 4),
+            Text(
+              '$valor',
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: AppColors.ink),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              rotulo,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 10, color: AppColors.muted, fontWeight: FontWeight.w700),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

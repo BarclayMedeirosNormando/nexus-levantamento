@@ -109,4 +109,20 @@ class FotoUploadService {
 
     return FotoUploadResult(enviadas: enviadas, falhas: falhas);
   }
+
+  /// Conta fotos com caminho local mas sem URL ainda — mesma condição usada
+  /// por [enviarPendentes], só que sem subir nada (2026-09-12, indicador de
+  /// pendências da Home).
+  Future<int> contarPendentes() async {
+    final db = await AppDatabase.instance.database;
+    var total = 0;
+    for (final (colunaLocal, colunaUrl, _) in _campos) {
+      final resultado = await db.rawQuery('''
+        SELECT COUNT(*) AS c FROM equipamentos
+        WHERE $colunaLocal IS NOT NULL AND $colunaLocal != '' AND ($colunaUrl IS NULL OR $colunaUrl = '')
+      ''');
+      total += (resultado.first['c'] as int?) ?? 0;
+    }
+    return total;
+  }
 }

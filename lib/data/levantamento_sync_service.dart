@@ -119,6 +119,17 @@ class LevantamentoSyncService {
     return PushResult(levantamentosEnviados: enviados, avisos: avisos);
   }
 
+  /// Conta quantos levantamentos têm QUALQUER pendência de sync — mesma
+  /// checagem usada por [pushPendentes] pra decidir o que enviar, só que
+  /// sem mandar nada pro servidor (2026-09-12, indicador de pendências da
+  /// Home — o técnico via as informações sumirem/aparecerem sem saber se
+  /// já tinha ido pro servidor ou não).
+  Future<int> contarPendentes() async {
+    final db = await AppDatabase.instance.database;
+    final ids = await _idsLevantamentosComPendencia(db);
+    return ids.length;
+  }
+
   Future<List<String>> _idsLevantamentosComPendencia(Database db) async {
     final ids = <String>{};
     for (final tabela in _tabelasPorLevantamento) {
@@ -280,6 +291,17 @@ class LevantamentoSyncService {
   // (`''`), não `null` — um `as num?` direto quebraria em runtime nesse
   // caso (GPS/medição opcional nunca preenchida). Aceita number OU string
   // numérica, e trata vazio como ausente.
+  // Uma célula em branco no Google Sheets chega aqui como string vazia
+  // ('', via getValues() no Apps Script), não `null` — pra campos tipo-enum
+  // como STATUS_LINK isso guardava '' no SQLite local em vez de null,
+  // quebrando o dropdown de status em ConectividadeScreen (nenhum item do
+  // enum bate com ''). Ver também `Conectividade.fromRow`, que faz a mesma
+  // normalização pra dados que já estavam salvos localmente antes deste fix.
+  dynamic _paraNuloSeVazio(dynamic valor) {
+    if (valor is String && valor.trim().isEmpty) return null;
+    return valor;
+  }
+
   double? _paraDouble(dynamic valor) {
     if (valor == null) return null;
     if (valor is num) return valor.toDouble();
@@ -398,7 +420,7 @@ class LevantamentoSyncService {
         'velocidade_contratada_mbps': remoto['VELOCIDADE_CONTRATADA_MBPS'],
         'velocidade_medida_download_mbps': _paraDouble(remoto['VELOCIDADE_MEDIDA_DOWNLOAD_MBPS']),
         'velocidade_medida_upload_mbps': _paraDouble(remoto['VELOCIDADE_MEDIDA_UPLOAD_MBPS']),
-        'status_link': remoto['STATUS_LINK'],
+        'status_link': _paraNuloSeVazio(remoto['STATUS_LINK']),
         'id_ambiente': remoto['ID_AMBIENTE'],
         'criado_por': remoto['CRIADO_POR'],
         'criado_em': remoto['CRIADO_EM']?.toString(),

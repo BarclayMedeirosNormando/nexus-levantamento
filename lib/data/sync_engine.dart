@@ -16,6 +16,20 @@ class SyncEngineResult {
   });
 }
 
+/// Indicador de pendências da Home (2026-09-12) — "levantamentos" conta
+/// quantos levantamentos têm alguma linha (dele ou de qualquer coisa dentro
+/// dele) ainda não confirmada pelo servidor; "fotos" conta fotos tiradas em
+/// campo que ainda não subiram pro Drive. Os dois são independentes: uma
+/// foto pode ficar pendente mesmo depois do levantamento já ter sido
+/// enviado (upload de imagem é mais lento/instável que o push de dados).
+class PendenciasResumo {
+  final int levantamentos;
+  final int fotos;
+  const PendenciasResumo({required this.levantamentos, required this.fotos});
+
+  int get total => levantamentos + fotos;
+}
+
 /// Ponto único que sabe "sincronizar tudo", na ordem certa — usado tanto
 /// pelo botão manual (`HomeScreen._sincronizar`) quanto pelo sync automático
 /// (background via `workmanager`, ver `background_sync.dart`, e o disparo
@@ -54,5 +68,13 @@ class SyncEngine {
       push: push,
       pull: pull,
     );
+  }
+
+  /// Só lê o banco local, nunca chama a rede — pode ser chamado a qualquer
+  /// momento (ex: toda vez que a Home aparece) sem custo de sync de verdade.
+  Future<PendenciasResumo> contarPendencias() async {
+    final levantamentos = await _levantamentoSyncService.contarPendentes();
+    final fotos = await _fotoUploadService.contarPendentes();
+    return PendenciasResumo(levantamentos: levantamentos, fotos: fotos);
   }
 }

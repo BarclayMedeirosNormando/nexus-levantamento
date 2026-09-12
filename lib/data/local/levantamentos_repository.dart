@@ -153,6 +153,59 @@ class LevantamentosRepository {
     }).toList();
   }
 
+  /// Levantamentos concluídos visíveis pro usuário logado (2026-09-12,
+  /// cartão "Concluídos" da Home) — respeita a MESMA regra de visibilidade
+  /// documentada na classe: só ADM enxerga concluído; técnico comum nunca
+  /// vê um levantamento depois que ele sai de em_andamento (a não ser que
+  /// seja reaberto, quando volta a status em_andamento e reaparece em
+  /// [listarEmAndamento] normalmente). Por isso devolve lista vazia direto
+  /// pra quem não é ADM, sem nem consultar o banco.
+  ///
+  /// [limite] existe pra não arriscar carregar uma lista enorme de uma vez
+  /// só (647 escolas, anos de levantamentos concluídos acumulando) — se um
+  /// dia isso passar a ser um problema real de verdade (mais concluídos do
+  /// que o limite), a tela que usa isso precisa de paginação de verdade em
+  /// vez de só aumentar o número.
+  Future<List<LevantamentoComEscola>> listarConcluidos({
+    required String matricula,
+    required bool isAdm,
+    int limite = 300,
+  }) async {
+    if (!isAdm) return const [];
+    final db = await AppDatabase.instance.database;
+    final rows = await db.rawQuery('''
+      SELECT
+        l.id, l.inep, l.tecnico_abertura, l.data_inicio, l.lat_abertura, l.long_abertura, l.status,
+        e.inep AS e_inep, e.nome AS e_nome, e.municipio AS e_municipio, e.regional AS e_regional, e.endereco AS e_endereco
+      FROM levantamentos l
+      LEFT JOIN escolas e ON e.inep = l.inep
+      WHERE l.status = 'concluido'
+      ORDER BY l.atualizado_em DESC
+      LIMIT ?
+    ''', [limite]);
+
+    return rows.map((row) {
+      final levantamento = Levantamento.fromRow(row);
+      final escola = Escola(
+        inep: (row['e_inep'] as String?) ?? levantamento.inep,
+        nome: (row['e_nome'] as String?) ?? '(escola não sincronizada — INEP ${levantamento.inep})',
+        municipio: row['e_municipio'] as String?,
+        regional: row['e_regional'] as String?,
+        endereco: row['e_endereco'] as String?,
+      );
+      return LevantamentoComEscola(levantamento: levantamento, escola: escola);
+    }).toList();
+  }
+
+  /// Conta concluídos sem carregar a lista inteira (mesma regra de
+  /// visibilidade acima) — usado no número do cartão-resumo da Home.
+  Future<int> contarConcluidos({required bool isAdm}) async {
+    if (!isAdm) return 0;
+    final db = await AppDatabase.instance.database;
+    final resultado = await db.rawQuery("SELECT COUNT(*) AS c FROM levantamentos WHERE status = 'concluido'");
+    return (resultado.first['c'] as int?) ?? 0;
+  }
+
   Future<Levantamento> criar({
     required String inep,
     required String matricula,

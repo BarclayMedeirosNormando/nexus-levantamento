@@ -37,8 +37,17 @@ dependencies:
   # Segurança / sessão
   flutter_secure_storage: ^9.2.2
 
-  # Sync em background (opcional, ativar depois)
-  workmanager: ^0.5.2
+  # Sync em background — 2026-09-12: bumped de ^0.5.2 pra ^0.10.10. A 0.5.2
+  # ainda usava classes do "shim" de compatibilidade com o embedding V1 do
+  # Flutter (PluginRegistry.Registrar/ShimPluginRegistry/
+  # PluginRegistrantCallback) que já não existem mais no engine atual —
+  # build falhava com "Unresolved reference" em cima dessas classes.
+  # Removido no changelog do próprio pacote a partir da 0.6.0 ("Removed V1
+  # plugin APIs — this is now an Android V2 plugin only"). A API usada em
+  # `lib/data/background_sync.dart` (`initialize`, `registerPeriodicTask`,
+  # `executeTask`, `Constraints`/`NetworkType.connected`) não mudou entre
+  # 0.5.2 e 0.10.10 — só a versão pinada precisava subir.
+  workmanager: ^0.10.10
 
   cupertino_icons: ^1.0.8
 
