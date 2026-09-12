@@ -11,12 +11,15 @@ import '../../data/local/servidores_repository.dart';
 import '../../data/levantamento_sync_service.dart';
 import '../../data/remote/api_client.dart';
 import '../../data/remote/auth_service.dart';
+import 'servidor_picker_sheet.dart';
 
 /// Tela 8 do spec — passo final do levantamento: checklist automático de
 /// pendências óbvias (não bloqueia, só avisa — "não deixa concluir com
 /// pendência óbvia sem pelo menos um aviso explícito"), escolha do
-/// Servidor responsável (só quem tem PODE_ASSINAR=true) e assinatura no
-/// canvas (`signature` pkg). Ao confirmar: sobe a assinatura pro Drive
+/// Servidor responsável pela assinatura (busca por matrícula ou nome em
+/// TODOS os servidores sincronizados — ver decisão de 2026-09-12 em
+/// `ServidoresRepository.buscar`, não é mais restrito a quem tem
+/// PODE_ASSINAR=true) e assinatura no canvas (`signature` pkg). Ao confirmar: sobe a assinatura pro Drive
 /// (`upload_assinatura` — mesmo endpoint que já existia no backend sem
 /// nunca ter sido chamado pelo app, ver §9 do spec), grava STATUS=concluido
 /// localmente (LevantamentosRepository.concluir) e sincroniza na hora
@@ -47,7 +50,6 @@ class _ConclusaoScreenState extends State<ConclusaoScreen> {
   final _ambientesRepo = AmbientesRepository();
   final _equipamentosRepo = EquipamentosRepository();
   final _conectividadeRepo = ConectividadeRepository();
-  final _servidoresRepo = ServidoresRepository();
   final _levantamentosRepo = LevantamentosRepository();
   final _syncService = LevantamentoSyncService();
   final _api = ApiClient();
@@ -61,7 +63,6 @@ class _ConclusaoScreenState extends State<ConclusaoScreen> {
   bool _semAmbienteNenhum = false;
   List<String> _ambientesSemNada = const [];
   bool _semConectividade = false;
-  List<ServidorAssinante> _assinantes = const [];
   ServidorAssinante? _responsavel;
 
   @override
@@ -86,15 +87,22 @@ class _ConclusaoScreenState extends State<ConclusaoScreen> {
       if (inserviveis.isEmpty) vazios.add(ambiente.nomeAmbiente);
     }
     final conectividade = await _conectividadeRepo.listarPorLevantamento(widget.levantamento.id);
-    final assinantes = await _servidoresRepo.listarAssinantes();
 
     if (!mounted) return;
     setState(() {
       _semAmbienteNenhum = ambientes.isEmpty;
       _ambientesSemNada = vazios;
       _semConectividade = conectividade.isEmpty;
-      _assinantes = assinantes;
       _carregando = false;
+    });
+  }
+
+  Future<void> _abrirPickerResponsavel() async {
+    final escolhido = await showServidorPickerSheet(context: context, session: widget.session);
+    if (escolhido == null || !mounted) return;
+    setState(() {
+      _responsavel = escolhido;
+      _erro = null;
     });
   }
 
@@ -208,22 +216,26 @@ class _ConclusaoScreenState extends State<ConclusaoScreen> {
                 const SizedBox(height: 20),
                 const Text('RESPONSÁVEL PELA ASSINATURA', style: _labelStyle),
                 const SizedBox(height: 6),
-                _assinantes.isEmpty
-                    ? const Text(
-                        'Nenhum servidor com permissão de assinar sincronizado ainda. Sincronize os dados na Home.',
-                        style: TextStyle(color: AppColors.muted, fontSize: 13),
-                      )
-                    : DropdownButtonFormField<ServidorAssinante>(
-                        value: _responsavel,
-                        decoration: const InputDecoration(hintText: 'Selecione o servidor'),
-                        items: _assinantes
-                            .map((s) => DropdownMenuItem(value: s, child: Text(s.nome)))
-                            .toList(),
-                        onChanged: (v) => setState(() {
-                          _responsavel = v;
-                          _erro = null;
-                        }),
-                      ),
+                InkWell(
+                  onTap: _abrirPickerResponsavel,
+                  borderRadius: BorderRadius.circular(12),
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      hintText: 'Buscar por matrícula ou nome...',
+                      prefixIcon: Icon(Icons.search),
+                      suffixIcon: Icon(Icons.arrow_drop_down),
+                    ),
+                    child: Text(
+                      _responsavel == null
+                          ? 'Buscar por matrícula ou nome...'
+                          : '${_responsavel!.nome} (${_responsavel!.matricula})',
+                      style: _responsavel == null
+                          ? const TextStyle(color: AppColors.muted)
+                          : const TextStyle(color: AppColors.ink, fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 20),
                 Row(
                   children: [

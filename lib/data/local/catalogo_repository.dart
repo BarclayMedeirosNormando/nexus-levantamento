@@ -101,9 +101,41 @@ class CatalogoRepository {
   /// inteiro numa escola grande direto na tela — ver aviso de performance
   /// do spec sobre SELECT/FILTER pesado, mesmo raciocínio aqui: nunca
   /// devolver a tabela toda pra UI).
-  Future<List<CatalogoItem>> buscar(String query) async {
+  ///
+  /// [tipo] (decisão de 2026-09-12) filtra por um dos chips de
+  /// `tiposSugeridos` (ex.: "Desktop") — pedido do usuário pra poder "abrir"
+  /// um tipo e navegar só pelos modelos já cadastrados dele até achar (ou
+  /// não achar, e criar um novo ali mesmo) em vez de precisar lembrar o
+  /// nome do modelo de cabeça. Comparação sem diferenciar maiúsculas —
+  /// `tiposSugeridos` e o que o técnico digitou livremente podem não bater
+  /// exatamente na caixa.
+  Future<List<CatalogoItem>> buscar(String query, {String? tipo}) async {
     final db = await AppDatabase.instance.database;
     final termo = query.trim();
+    final tipoFiltro = tipo?.trim();
+
+    if (tipoFiltro != null && tipoFiltro.isNotEmpty) {
+      if (termo.isEmpty) {
+        final rows = await db.query(
+          'catalogo_equipamentos',
+          where: 'LOWER(tipo_equipamento) = LOWER(?)',
+          whereArgs: [tipoFiltro],
+          orderBy: 'marca ASC, modelo ASC',
+          limit: 50,
+        );
+        return rows.map(CatalogoItem.fromRow).toList();
+      }
+      final like = '%$termo%';
+      final rows = await db.query(
+        'catalogo_equipamentos',
+        where: 'LOWER(tipo_equipamento) = LOWER(?) AND (marca LIKE ? OR modelo LIKE ?)',
+        whereArgs: [tipoFiltro, like, like],
+        orderBy: 'marca ASC, modelo ASC',
+        limit: 30,
+      );
+      return rows.map(CatalogoItem.fromRow).toList();
+    }
+
     if (termo.isEmpty) {
       final rows = await db.query(
         'catalogo_equipamentos',

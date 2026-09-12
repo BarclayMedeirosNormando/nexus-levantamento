@@ -1,6 +1,13 @@
 import 'package:uuid/uuid.dart';
 import 'database.dart';
 
+/// '' → null. Uma célula em branco do Google Sheets chega no JSON do
+/// backend como string vazia, não `null` — sem essa normalização, campos
+/// tipo-enum (como `status_link`) guardavam `''` em vez de `null` depois de
+/// um sync, e quebravam qualquer dropdown que espera um dos valores válidos
+/// ou `null` (ver `Conectividade.fromRow`).
+String? _nuloSeVazio(String? valor) => (valor == null || valor.isEmpty) ? null : valor;
+
 class ContratoInternet {
   final String idContrato;
   final String inep;
@@ -67,7 +74,11 @@ class Conectividade {
       velocidadeContratadaMbps: row['velocidade_contratada_mbps'] as String?,
       velocidadeMedidaDownloadMbps: (row['velocidade_medida_download_mbps'] as num?)?.toDouble(),
       velocidadeMedidaUploadMbps: (row['velocidade_medida_upload_mbps'] as num?)?.toDouble(),
-      statusLink: row['status_link'] as String?,
+      // '' vira null aqui de propósito: uma célula em branco do Sheets
+      // chega do sync como string vazia (não null), e um STATUS_LINK ''
+      // quebrava o dropdown de status em ConectividadeScreen (nenhum item
+      // do enum bate com ''). Ver também o defensive-check espelhado lá.
+      statusLink: _nuloSeVazio(row['status_link'] as String?),
       idAmbiente: row['id_ambiente'] as String?,
     );
   }

@@ -137,10 +137,19 @@ class _ConectividadeScreenState extends State<ConectividadeScreen> {
     }
   }
 
+  static const _statusValidos = {'ATIVA', 'INATIVA', 'NAO_ENCONTRADA'};
+
   Future<void> _editarEstado(Conectividade link) async {
     final downloadController = TextEditingController(text: link.velocidadeMedidaDownloadMbps?.toString() ?? '');
     final uploadController = TextEditingController(text: link.velocidadeMedidaUploadMbps?.toString() ?? '');
-    String? status = link.statusLink;
+    // Só aceita um valor que exista de verdade nos itens do dropdown abaixo
+    // — sem isso, um link sincronizado de outro aparelho com STATUS_LINK
+    // vazio ("", não null — é assim que uma célula em branco do Sheets
+    // chega aqui, ver `_conectividadeParaLocal` no motor de sync) quebrava
+    // o DropdownButtonFormField com "Either zero or 2 or more
+    // DropdownMenuItems were detected with the same value". Mesmo padrão já
+    // usado no dropdown de Ambiente em ConectividadeFormEscolaScreen.
+    String? status = _statusValidos.contains(link.statusLink) ? link.statusLink : null;
 
     final salvou = await showDialog<bool>(
       context: context,

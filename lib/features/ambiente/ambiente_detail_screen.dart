@@ -13,10 +13,11 @@ import '../levantamento/inservivel_form_screen.dart';
 /// tinham como ser corrigidos, só recriados do zero).
 ///
 /// "Novo equipamento" segue o fluxo "catálogo primeiro" pedido: abre a busca
-/// no catálogo (showCatalogoPickerSheet) antes do formulário — se a pessoa
-/// escolher um item, o formulário já abre preenchido; se escolher "Digitar
-/// sem catálogo", abre em branco igual sempre foi; se cancelar, não abre
-/// nada.
+/// no catálogo (showCatalogoPickerSheet, com chips de filtro por Tipo desde
+/// 2026-09-12) antes do formulário — se a pessoa escolher um item, o
+/// formulário já abre preenchido; se o modelo não existir, "Criar modelo"
+/// cadastra ali mesmo; se cancelar, não abre nada (não existe mais opção de
+/// digitar sem catálogo).
 class AmbienteDetailScreen extends StatefulWidget {
   const AmbienteDetailScreen({
     super.key,
