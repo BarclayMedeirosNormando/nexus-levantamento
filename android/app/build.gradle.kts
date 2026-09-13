@@ -30,6 +30,15 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            // 2026-09-13: build --release estava falhando no R8 por causa de
+            // classes opcionais do google_mlkit_text_recognition (scripts
+            // chinês/japonês/coreano/devanágari que o app nunca usa) — ver
+            // proguard-rules.pro. Sem isso, minifyReleaseWithR8 quebra o
+            // build inteiro mesmo o app usando só reconhecimento em latino.
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }
