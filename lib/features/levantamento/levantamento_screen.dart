@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
+import '../../data/levantamento_sync_service.dart';
 import '../../data/local/ambientes_repository.dart';
 import '../../data/local/auxiliares_repository.dart';
 import '../../data/local/escolas_repository.dart';
@@ -38,6 +41,7 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
   final _ambientesRepo = AmbientesRepository();
   final _auxiliaresRepo = AuxiliaresRepository();
   final _levantamentosRepo = LevantamentosRepository();
+  final _syncService = LevantamentoSyncService();
 
   bool _carregando = true;
   bool _salvando = false;
@@ -51,10 +55,59 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
   // ao confirmar a seleção inicial nesta sessão (ver _confirmarSelecaoInicial).
   late bool _selecaoAmbientesFeita = widget.levantamento.ambientesSelecaoFeita;
 
+  // Sync "quase em tempo real" (2026-09-13) — pedido do Barclay: quando um
+  // técnico cria os ambientes, os auxiliares precisam ver isso pra poder
+  // começar a cadastrar equipamento, e esperar o sync de 15 em 15 min (ou
+  // alguém lembrar de tocar em "Sincronizar") demorava demais em campo.
+  // Timer só ativo enquanto ESTA tela está aberta — busca a cada 25s se
+  // algo novo chegou pra este levantamento (ambiente/equipamento criado por
+  // outro auxiliar). Chama só `pull_levantamentos_ativos` (o backend já
+  // filtra pra só este(s) levantamento(s), ver `linhasPorLevantamento` em
+  // backend_levantamento.gs) — NUNCA o `pull_referencia` pesado, que seria
+  // exagero rodar a cada 25s. Silencioso de propósito: sem rede, só não
+  // atualiza nada até a próxima tentativa, nunca interrompe o uso da tela.
+  Timer? _pollTimer;
+  bool _atualizandoEmSegundoPlano = false;
+
   @override
   void initState() {
     super.initState();
     _carregar();
+    _pollTimer = Timer.periodic(const Duration(seconds: 25), (_) => _atualizarEmSegundoPlano());
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _atualizarEmSegundoPlano() async {
+    if (_atualizandoEmSegundoPlano || !mounted) return;
+    _atualizandoEmSegundoPlano = true;
+    try {
+      await _syncService.pullLevantamentosAtivos(widget.session);
+      if (!mounted) return;
+      await _recarregarAmbientesCriados();
+    } catch (_) {
+      // Sem rede ou erro passageiro — tenta de novo no próximo ciclo (25s).
+    } finally {
+      _atualizandoEmSegundoPlano = false;
+    }
+  }
+
+  // Sobe este levantamento pro servidor na hora, em vez de esperar o
+  // próximo sync completo (manual, ao reconectar, ou o automático de 15 em
+  // 15 min) — é o outro lado do mesmo pedido: sem isso, o ambiente ficava
+  // `pending` neste aparelho até um desses gatilhos, e só DEPOIS disso o
+  // auxiliar (com o polling acima) tinha algo novo pra baixar. Best-effort
+  // e silencioso: se não tiver rede agora, o registro continua `pending` e
+  // sobe sozinho no próximo sync de qualquer forma — não é uma falha que
+  // precise aparecer pro usuário.
+  void _pushImediato() {
+    unawaited(_syncService.pushPendentes(widget.session).catchError((_) {
+      return const PushResult(levantamentosEnviados: 0, avisos: []);
+    }));
   }
 
   Future<void> _carregar() async {
@@ -92,6 +145,7 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
 
   Future<void> _confirmarSelecaoInicial({bool pular = false}) async {
     setState(() => _salvando = true);
+    var criouAlgo = false;
     if (!pular && _selecionados.isNotEmpty) {
       final selecionados = _ambientesPadrao.where((p) => _selecionados.contains(p.idTipoAmbiente)).toList();
       await _ambientesRepo.criarEmLote(
@@ -100,12 +154,14 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
         matricula: widget.session.matricula,
         selecionados: selecionados,
       );
+      criouAlgo = true;
     }
     // Marca a etapa como concluída sempre — inclusive ao pular — senão,
     // sem nenhum ambiente criado, a tela não teria como saber que a
     // seleção já foi decidida e voltaria a mostrar o checklist pra sempre.
     await _levantamentosRepo.marcarSelecaoAmbientesFeita(widget.levantamento.id);
     await _recarregarAmbientesCriados();
+    if (criouAlgo) _pushImediato();
     if (!mounted) return;
     setState(() {
       _salvando = false;
@@ -133,6 +189,7 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
     );
     if (criouAlgo == true) {
       await _recarregarAmbientesCriados();
+      _pushImediato();
     }
   }
 
