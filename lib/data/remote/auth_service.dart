@@ -9,15 +9,27 @@ class Session {
   final String matricula;
   final String papel; // 'TECNICO' ou 'ADM'
   final String nome;
+  final bool senhaTemporaria;
 
   const Session({
     required this.token,
     required this.matricula,
     required this.papel,
     required this.nome,
+    this.senhaTemporaria = false,
   });
 
   bool get isAdm => papel == 'ADM';
+
+  Session copyWith({bool? senhaTemporaria}) {
+    return Session(
+      token: token,
+      matricula: matricula,
+      papel: papel,
+      nome: nome,
+      senhaTemporaria: senhaTemporaria ?? this.senhaTemporaria,
+    );
+  }
 }
 
 /// Login é a ÚNICA ação que exige internet na hora (ver design do backend:
@@ -36,6 +48,14 @@ class AuthService {
   static const _kMatricula = 'session_matricula';
   static const _kPapel = 'session_papel';
   static const _kNome = 'session_nome';
+  // 2026-09-13: junto com o fluxo de troca de senha obrigatória — precisa
+  // sobreviver a fechar/abrir o app porque o login (única ação que exige
+  // rede) não roda de novo a cada abertura (ver getSavedSession/
+  // _StartupGate em app.dart). Sem persistir isso aqui, alguém que
+  // recebesse uma senha temporária/resetada e fechasse o app antes de
+  // trocar escaparia da obrigação na próxima vez que abrisse (cairia
+  // direto na Home via sessão salva).
+  static const _kSenhaTemporaria = 'session_senha_temporaria';
 
   /// Faz login contra o servidor. Lança [ApiException] se não tiver rede;
   /// retorna null (sem lançar) se o servidor respondeu mas recusou o login
@@ -56,6 +76,7 @@ class AuthService {
       matricula: matricula.trim(),
       papel: (resposta['papel'] as String?)?.toUpperCase() ?? 'TECNICO',
       nome: resposta['nome']?.toString() ?? '',
+      senhaTemporaria: resposta['senha_temporaria'] == true,
     );
 
     await _saveSession(session);
@@ -67,6 +88,7 @@ class AuthService {
     await _storage.write(key: _kMatricula, value: session.matricula);
     await _storage.write(key: _kPapel, value: session.papel);
     await _storage.write(key: _kNome, value: session.nome);
+    await _storage.write(key: _kSenhaTemporaria, value: session.senhaTemporaria ? '1' : '0');
   }
 
   /// Lê a sessão salva (se houver) — usado na abertura do app pra decidir
@@ -79,7 +101,29 @@ class AuthService {
       matricula: await _storage.read(key: _kMatricula) ?? '',
       papel: await _storage.read(key: _kPapel) ?? 'TECNICO',
       nome: await _storage.read(key: _kNome) ?? '',
+      senhaTemporaria: (await _storage.read(key: _kSenhaTemporaria)) == '1',
     );
+  }
+
+  /// Troca a senha do próprio usuário logado — chamado tanto no fluxo
+  /// obrigatório (senha temporária/resetada, ver TrocarSenhaScreen) quanto
+  /// no voluntário (Home → "Trocar minha senha"). Exige o token da sessão
+  /// atual (requireAuth no backend) — não pede a senha antiga porque quem
+  /// está chamando isso já provou identidade ao logar. Em caso de sucesso,
+  /// atualiza a sessão salva localmente (senhaTemporaria vira false) e
+  /// devolve a Session atualizada pra quem chamou trocar a que está usando
+  /// em memória (ex: navegar pra Home com a session certa).
+  Future<Session> trocarSenha({required Session session, required String novaSenha}) async {
+    final resposta = await _api.call('trocar_senha', {
+      'token': session.token,
+      'nova_senha': novaSenha,
+    });
+    if (resposta['ok'] != true) {
+      throw ApiException(resposta['error']?.toString() ?? 'Não foi possível trocar a senha.');
+    }
+    final atualizada = session.copyWith(senhaTemporaria: false);
+    await _saveSession(atualizada);
+    return atualizada;
   }
 
   Future<void> logout() async {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import '../../data/remote/auth_service.dart';
 import '../home/home_screen.dart';
+import 'trocar_senha_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -16,6 +17,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _senhaController = TextEditingController();
 
   bool _loading = false;
+  bool _obscureSenha = true;
   String? _erro;
 
   @override
@@ -51,8 +53,19 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
+      final session = resultado.session!;
+      if (session.senhaTemporaria) {
+        // Senha temporária (primeiro acesso ou reset pelo ADM) — obriga a
+        // trocar antes de liberar a Home, sem opção de voltar/cancelar (ver
+        // TrocarSenhaScreen).
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => TrocarSenhaScreen(session: session, obrigatorio: true)),
+        );
+        return;
+      }
+
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => HomeScreen(session: resultado.session!)),
+        MaterialPageRoute(builder: (_) => HomeScreen(session: session)),
       );
     } catch (e) {
       if (!mounted) return;
@@ -149,10 +162,17 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 16),
                     TextField(
                       controller: _senhaController,
-                      obscureText: true,
+                      obscureText: _obscureSenha,
                       enabled: !_loading,
                       onSubmitted: (_) => _entrar(),
-                      decoration: const InputDecoration(labelText: 'SENHA'),
+                      decoration: InputDecoration(
+                        labelText: 'SENHA',
+                        suffixIcon: IconButton(
+                          icon: Icon(_obscureSenha ? Icons.visibility_off : Icons.visibility),
+                          tooltip: _obscureSenha ? 'Mostrar senha' : 'Ocultar senha',
+                          onPressed: () => setState(() => _obscureSenha = !_obscureSenha),
+                        ),
+                      ),
                     ),
                     if (_erro != null) ...[
                       const SizedBox(height: 12),

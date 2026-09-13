@@ -10,9 +10,11 @@ import '../../data/remote/api_client.dart';
 import '../../data/remote/auth_service.dart';
 import '../../data/sync_engine.dart';
 import '../auth/login_screen.dart';
+import '../auth/trocar_senha_screen.dart';
 import '../catalogo/catalogo_modelos_screen.dart';
 import '../escola/escola_detail_screen.dart';
 import 'escola_card.dart';
+import 'gerenciar_tecnicos_screen.dart';
 import 'levantamentos_lista_screen.dart';
 import 'regionais_screen.dart';
 
@@ -248,6 +250,35 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     );
   }
 
+  void _abrirTrocarSenha() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => TrocarSenhaScreen(session: widget.session)),
+    );
+  }
+
+  void _abrirGerenciarTecnicos() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => GerenciarTecnicosScreen(session: widget.session)),
+    );
+  }
+
+  void _onMenuSelecionado(String valor) {
+    switch (valor) {
+      case 'catalogo':
+        _abrirCatalogoModelos();
+        break;
+      case 'trocar_senha':
+        _abrirTrocarSenha();
+        break;
+      case 'gerenciar_tecnicos':
+        _abrirGerenciarTecnicos();
+        break;
+      case 'sair':
+        _sair();
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final buscando = _buscaController.text.trim().isNotEmpty;
@@ -256,11 +287,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
       appBar: AppBar(
         title: const Text('Minhas Escolas'),
         actions: [
-          IconButton(
-            onPressed: _abrirCatalogoModelos,
-            icon: const Icon(Icons.inventory_2_outlined),
-            tooltip: 'Catálogo de Modelos',
-          ),
           IconButton(
             onPressed: _syncing ? null : _sincronizar,
             icon: _syncing
@@ -272,7 +298,41 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                 : const Icon(Icons.sync),
             tooltip: 'Sincronizar dados',
           ),
-          IconButton(onPressed: _sair, icon: const Icon(Icons.logout), tooltip: 'Sair'),
+          // 2026-09-13: ações menos frequentes (catálogo, trocar senha,
+          // gerenciar técnicos — só ADM — e sair) foram pro menu de
+          // overflow, pra caber sem apertar a AppBar em tela de celular
+          // depois de ter entrado mais uma opção (Gerenciar técnicos).
+          PopupMenuButton<String>(
+            onSelected: _onMenuSelecionado,
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'catalogo',
+                child: ListTile(
+                  leading: Icon(Icons.inventory_2_outlined),
+                  title: Text('Catálogo de Modelos'),
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'trocar_senha',
+                child: ListTile(
+                  leading: Icon(Icons.lock_reset_rounded),
+                  title: Text('Trocar minha senha'),
+                ),
+              ),
+              if (widget.session.isAdm)
+                const PopupMenuItem(
+                  value: 'gerenciar_tecnicos',
+                  child: ListTile(
+                    leading: Icon(Icons.manage_accounts_outlined),
+                    title: Text('Gerenciar técnicos'),
+                  ),
+                ),
+              const PopupMenuItem(
+                value: 'sair',
+                child: ListTile(leading: Icon(Icons.logout), title: Text('Sair')),
+              ),
+            ],
+          ),
         ],
       ),
       body: Column(

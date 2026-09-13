@@ -22,6 +22,25 @@ class ServidorAssinante {
   }
 }
 
+/// Servidor com login habilitado no app (técnico ou ADM) — usado pela tela
+/// "Gerenciar técnicos" (2026-09-13) pra ADM achar quem precisa de reset de
+/// senha. Diferente de [ServidorAssinante] (que é sobre PODE_ASSINAR, sem
+/// nenhuma relação com login/senha).
+class ServidorComLogin {
+  final String matricula;
+  final String nome;
+  final String papel;
+  const ServidorComLogin({required this.matricula, required this.nome, required this.papel});
+
+  factory ServidorComLogin.fromRow(Map<String, Object?> row) {
+    return ServidorComLogin(
+      matricula: row['matricula'] as String,
+      nome: row['nome'] as String? ?? row['matricula'] as String,
+      papel: row['papel'] as String? ?? 'TECNICO',
+    );
+  }
+}
+
 /// SERVIDORES é referência (populada em `pull_referencia`, ~26-29 mil
 /// linhas — ver §10 do spec). Desde 2026-09-12 a aba INTEIRA chega no
 /// aparelho a cada sync (ver `actionPullReferencia` no backend) — não só
@@ -102,5 +121,37 @@ class ServidoresRepository {
         .map((m) => ServidorAssinante.fromRemoto(m.cast<String, dynamic>()))
         .toList();
     return lista;
+  }
+
+  /// Lista, 100% offline, todo servidor com LOGIN_HABILITADO=true (quem usa
+  /// o app de verdade — técnicos e ADMs) — usada pela tela "Gerenciar
+  /// técnicos" (2026-09-13) pra ADM achar quem precisa de reset de senha.
+  /// Não inclui quem só PODE_ASSINAR (diretores/responsáveis sem login).
+  Future<List<ServidorComLogin>> listarComLogin() async {
+    final db = await AppDatabase.instance.database;
+    final rows = await db.query(
+      'servidores',
+      where: 'login_habilitado = 1',
+      orderBy: 'nome ASC',
+    );
+    return rows.map(ServidorComLogin.fromRow).toList();
+  }
+
+  /// Reseta a senha de outro servidor pra "123456", já marcada como
+  /// temporária no servidor (SENHA_TEMPORARIA=true) — a próxima vez que
+  /// essa pessoa logar, o app força a troca antes de deixar entrar (ver
+  /// TrocarSenhaScreen/LoginScreen). AÇÃO ONLINE-ONLY, só ADM (o backend
+  /// confere de novo — nunca confia só na tela ter escondido o botão pra
+  /// quem não é ADM). Não mexe em nada local: SERVIDORES local nunca guarda
+  /// hash/senha (ver ServidoresRepository/actionPullReferencia), então não
+  /// há nada pra atualizar aqui além do próprio backend.
+  Future<void> resetarSenha({required String matricula, required Session session}) async {
+    final resposta = await _api.call('resetar_senha', {
+      'token': session.token,
+      'matricula': matricula,
+    });
+    if (resposta['ok'] != true) {
+      throw ApiException(resposta['error']?.toString() ?? 'Não foi possível resetar a senha.');
+    }
   }
 }
