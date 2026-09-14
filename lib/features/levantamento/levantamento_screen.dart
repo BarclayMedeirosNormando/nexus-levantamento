@@ -303,6 +303,9 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
   }
 
   Future<void> _abrirConclusao() async {
+    final prosseguir = await _confirmarRevisaoAntesDeConcluir();
+    if (prosseguir != true || !mounted) return;
+
     final concluido = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => ConclusaoScreen(
@@ -315,6 +318,78 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
     // Concluído: não há mais nada pra fazer aqui — volta pra tela da
     // escola, que mostra o histórico já com o status "Concluído".
     if (concluido == true && mounted) Navigator.of(context).pop();
+  }
+
+  // Revisão antes de concluir (2026-09-14, pedido do Barclay): antes de ir
+  // pra tela de assinatura, mostra um resumo de tudo que foi cadastrado
+  // neste levantamento — pra não descobrir só depois de já ter assinado
+  // que esqueceu de preencher Conectividade, ou que um ambiente ficou sem
+  // nenhum equipamento. Não bloqueia (o técnico pode continuar mesmo com
+  // avisos), só avisa.
+  Future<bool?> _confirmarRevisaoAntesDeConcluir() {
+    final totalAmbientes = _ambientesCriados.length;
+    final ambientesVazios = _ambientesCriados.where((a) => a.qtdEquipamentos == 0).length;
+    final totalEquipamentos = _ambientesCriados.fold<int>(0, (soma, a) => soma + a.qtdEquipamentos);
+
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Revisar antes de concluir'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _linhaResumo(Icons.meeting_room_outlined, '$totalAmbientes ambiente${totalAmbientes == 1 ? '' : 's'}'),
+            _linhaResumo(
+              Icons.devices_other_outlined,
+              '$totalEquipamentos equipamento${totalEquipamentos == 1 ? '' : 's'}',
+            ),
+            _linhaResumo(
+              Icons.lan_outlined,
+              '$_qtdConectividade link${_qtdConectividade == 1 ? '' : 's'} de conectividade',
+            ),
+            _linhaResumo(Icons.wifi, '$_qtdWifi rede${_qtdWifi == 1 ? '' : 's'} de wifi'),
+            _linhaResumo(Icons.photo_camera_outlined, '$_qtdFotos foto${_qtdFotos == 1 ? '' : 's'}'),
+            if (ambientesVazios > 0) ...[
+              const SizedBox(height: 12),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.warning_amber_rounded, color: AppColors.warning, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '$ambientesVazios ambiente${ambientesVazios == 1 ? '' : 's'} sem nenhum equipamento cadastrado.',
+                      style: const TextStyle(fontSize: 12, color: AppColors.warning, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Voltar')),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Continuar para assinatura'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _linhaResumo(IconData icone, String texto) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icone, size: 18, color: AppColors.muted),
+          const SizedBox(width: 10),
+          Expanded(child: Text(texto, style: const TextStyle(fontSize: 13, color: AppColors.ink))),
+        ],
+      ),
+    );
   }
 
   // Ícone da AppBar com contador (bolinha com número) — mesmo padrão que já
@@ -505,14 +580,67 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
         ),
       );
     }
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 90),
-      itemCount: _ambientesCriados.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final ambiente = _ambientesCriados[index];
-        return _AmbienteCard(ambiente: ambiente, onTap: () => _abrirAmbiente(ambiente));
-      },
+    final comEquipamento = _ambientesCriados.where((a) => a.qtdEquipamentos > 0).length;
+    return Column(
+      children: [
+        _ProgressoAmbientes(total: _ambientesCriados.length, comEquipamento: comEquipamento),
+        Expanded(
+          child: ListView.separated(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 90),
+            itemCount: _ambientesCriados.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              final ambiente = _ambientesCriados[index];
+              return _AmbienteCard(ambiente: ambiente, onTap: () => _abrirAmbiente(ambiente));
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Resumo fixo acima da lista de ambientes (2026-09-14, pedido do Barclay):
+/// antes disso só dava pra saber "quantos ambientes faltam equipamento"
+/// rolando a lista inteira e reparando nos cards em laranja. Barra +
+/// contagem dão isso de relance, sem abrir nada.
+class _ProgressoAmbientes extends StatelessWidget {
+  const _ProgressoAmbientes({required this.total, required this.comEquipamento});
+  final int total;
+  final int comEquipamento;
+
+  @override
+  Widget build(BuildContext context) {
+    final progresso = total == 0 ? 0.0 : comEquipamento / total;
+    final completo = comEquipamento == total;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '$comEquipamento de $total ambiente${total == 1 ? '' : 's'} com equipamento',
+                style: const TextStyle(fontSize: 12, color: AppColors.muted, fontWeight: FontWeight.w600),
+              ),
+              if (completo)
+                const Icon(Icons.check_circle_outline_rounded, size: 16, color: AppColors.success),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: progresso,
+              minHeight: 6,
+              backgroundColor: AppColors.line,
+              color: completo ? AppColors.success : AppColors.primary,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

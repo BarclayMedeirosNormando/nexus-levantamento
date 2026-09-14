@@ -36,37 +36,100 @@ class LevantamentosListaScreen extends StatefulWidget {
 
 class _LevantamentosListaScreenState extends State<LevantamentosListaScreen> {
   late final List<LevantamentoComEscola> _itens = List.of(widget.itens);
+  final _buscaController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _buscaController.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _buscaController.dispose();
+    super.dispose();
+  }
 
   void _removerDaLista(LevantamentoComEscola item) {
     setState(() => _itens.remove(item));
   }
 
+  // Busca por nome da escola ou município (2026-09-14, pedido do Barclay):
+  // a lista de concluídos pode chegar a centenas (ver
+  // LevantamentosRepository.listarConcluidos, capado em 300) — sem isso só
+  // dava pra achar uma escola específica rolando a lista inteira.
+  List<LevantamentoComEscola> get _itensFiltrados {
+    final termo = _buscaController.text.trim().toLowerCase();
+    if (termo.isEmpty) return _itens;
+    return _itens.where((i) {
+      final nome = i.escola.nome.toLowerCase();
+      final municipio = (i.escola.municipio ?? '').toLowerCase();
+      return nome.contains(termo) || municipio.contains(termo);
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final visiveis = _itensFiltrados;
+    final buscando = _buscaController.text.trim().isNotEmpty;
     return Scaffold(
       appBar: AppBar(title: Text('${widget.titulo} (${_itens.length})')),
-      body: _itens.isEmpty
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(32),
-                child: Text(
-                  'Nada por aqui.',
-                  style: TextStyle(color: AppColors.muted, fontSize: 13),
-                ),
-              ),
-            )
-          : FadeIn(
-              child: ListView.separated(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                itemCount: _itens.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 8),
-                itemBuilder: (context, index) => _ItemCard(
-                  item: _itens[index],
-                  session: widget.session,
-                  onReaberto: () => _removerDaLista(_itens[index]),
+      body: Column(
+        children: [
+          if (_itens.length > 1)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: TextField(
+                controller: _buscaController,
+                decoration: InputDecoration(
+                  hintText: 'Buscar por escola ou município',
+                  prefixIcon: const Icon(Icons.search, size: 20),
+                  suffixIcon: buscando
+                      ? IconButton(
+                          icon: const Icon(Icons.close, size: 18),
+                          onPressed: _buscaController.clear,
+                        )
+                      : null,
+                  filled: true,
+                  fillColor: AppColors.surface,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 14),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: AppColors.line),
+                  ),
                 ),
               ),
             ),
+          Expanded(
+            child: visiveis.isEmpty
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Text(
+                        buscando ? 'Nenhuma escola encontrada pra "${_buscaController.text}".' : 'Nada por aqui.',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: AppColors.muted, fontSize: 13),
+                      ),
+                    ),
+                  )
+                : FadeIn(
+                    child: ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                      itemCount: visiveis.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (context, index) {
+                        final item = visiveis[index];
+                        return _ItemCard(
+                          item: item,
+                          session: widget.session,
+                          onReaberto: () => _removerDaLista(item),
+                        );
+                      },
+                    ),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
