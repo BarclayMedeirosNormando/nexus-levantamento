@@ -36,14 +36,29 @@ class PullAtivosResult {
 /// ter dado próprio ainda não sincronizado (`sync_status = 'pending'`) que
 /// nunca pode ser pisado por um pull.
 ///
-/// Caveat conhecido (não resolvido aqui): remover um auxiliar é hoje uma
-/// operação só local (`AuxiliaresRepository.remover` apaga a linha na hora,
-/// sem passar por `sync_status`) — o backend (`actionPushLevantamento`) só
-/// ADICIONA auxiliar que ainda não existe lá, nunca remove. Ou seja: tirar
-/// um auxiliar aqui não é comunicado pro servidor, e um próximo pull pode
-/// trazer esse auxiliar de volta se outro aparelho (ou o servidor) ainda o
-/// tiver. Resolver isso direito exigiria endpoint próprio de remoção —
-/// fica como próxima pendência, fora do escopo de "fazer o básico sincronizar".
+/// Remoção de Ambiente/Equipamento/Inservível/Conectividade/Wifi/Foto é
+/// sincronizada de verdade (2026-09-14, ver RemocoesPendentesRepository):
+/// cada remoção grava um tombstone local, mandado aqui em `pushPendentes`
+/// (campo `remocoes`) — o backend (`deletarLinhasPorId`) apaga a linha de
+/// fato na planilha, e o guard em `_mergeLinhaSimples` impede um pull
+/// (inclusive o polling de 25s do próprio aparelho) de trazer de volta algo
+/// ainda não confirmado. Resolve o bug relatado pelo Barclay ("removo um
+/// ambiente e ele volta sozinho depois de uns segundos").
+///
+/// Caveat que continua (fora do escopo deste fix): remover um AUXILIAR do
+/// levantamento (`AuxiliaresRepository.remover`) ainda é só local — não tem
+/// tombstone próprio, o backend só ADICIONA auxiliar que ainda não existe,
+/// nunca remove. Mesma ideia serviria aqui se um dia isso virar pendência
+/// real (hoje o próprio Barclay não pediu isso).
+///
+/// Caveat de escala entre APARELHOS DIFERENTES: deletarLinhasPorId apaga a
+/// linha na planilha, então um pull FUTURO (de qualquer aparelho) já não
+/// traz mais aquilo — mas um aparelho que JÁ tinha baixado essa linha antes
+/// da remoção não tem ela apagada automaticamente da base local dele (esta
+/// versão só evita reinserir onde a remoção aconteceu). Ficaria "sumido pro
+/// servidor, mas ainda visível" no aparelho de quem não fez a remoção, até
+/// alguém mexer nele de novo — fora do escopo deste fix (que resolve o caso
+/// relatado: mesmo aparelho, remoção reaparecendo em segundos).
 class LevantamentoSyncService {
   LevantamentoSyncService({ApiClient? apiClient}) : _api = apiClient ?? ApiClient();
   final ApiClient _api;
@@ -59,6 +74,19 @@ class LevantamentoSyncService {
     'fotos_levantamento',
     'atividades',
   ];
+
+  // Tradução tabela local (sqlite) -> aba do Sheets, só usada pra montar o
+  // payload de `remocoes` no push (2026-09-14, ver RemocoesPendentesRepository
+  // e deletarLinhasPorId no backend). Cobre só as 6 tabelas que podem ser
+  // removidas de fato em campo — nunca LEVANTAMENTOS/SERVIDORES/ATIVIDADES.
+  static const _sheetPorTabelaLocal = {
+    'ambientes': 'AMBIENTES',
+    'equipamentos': 'EQUIPAMENTOS',
+    'equipamentos_inserviveis': 'EQUIPAMENTOS_INSERVIVEIS',
+    'conectividade': 'CONECTIVIDADE',
+    'wifi': 'WIFI',
+    'fotos_levantamento': 'FOTOS',
+  };
 
   // ---------------------------------------------------------------------
   // PUSH
@@ -94,6 +122,7 @@ class LevantamentoSyncService {
         'wifi': await _linhasParaApi(db, 'wifi', idLevantamento, _wifiParaApi),
         'fotos': await _linhasParaApi(db, 'fotos_levantamento', idLevantamento, _fotoParaApi),
         'atividades': await _linhasParaApi(db, 'atividades', idLevantamento, _atividadeParaApi),
+        'remocoes': await _remocoesParaApi(db, idLevantamento),
       };
 
       final resposta = await _api.call('push_levantamento', payload);
@@ -113,6 +142,10 @@ class LevantamentoSyncService {
             whereArgs: [idLevantamento],
           );
         }
+        // Servidor confirmou o push (inclusive as remoções, ver 'remocoes'
+        // no payload acima e deletarLinhasPorId no backend) — os
+        // tombstones locais já cumpriram o papel deles, apaga.
+        await txn.delete('remocoes_pendentes', where: 'id_levantamento = ?', whereArgs: [idLevantamento]);
       });
 
       enviados++;
@@ -144,6 +177,16 @@ class LevantamentoSyncService {
         if (valor != null) ids.add(valor);
       }
     }
+    // Remoção pendente (2026-09-14, ver RemocoesPendentesRepository): a
+    // linha removida já não existe mais em NENHUMA tabela com
+    // sync_status='pending' pra achar aqui em cima — sem isto, remover o
+    // ÚNICO item pendente de um levantamento fazia ele parar de entrar
+    // nesta lista, e a remoção nunca era enviada pro servidor.
+    final remocoes = await db.query('remocoes_pendentes', columns: ['id_levantamento'], distinct: true);
+    for (final row in remocoes) {
+      final valor = row['id_levantamento'] as String?;
+      if (valor != null) ids.add(valor);
+    }
     return ids.toList();
   }
 
@@ -160,6 +203,19 @@ class LevantamentoSyncService {
   Future<List<String>> _auxiliaresParaApi(Database db, String idLevantamento) async {
     final rows = await db.query('levantamento_tecnicos', where: 'id_levantamento = ?', whereArgs: [idLevantamento]);
     return rows.map((r) => r['matricula_tecnico'] as String).toList();
+  }
+
+  // Tombstones pendentes deste levantamento, traduzidos pro nome da aba do
+  // Sheets — ver _sheetPorTabelaLocal e RemocoesPendentesRepository.
+  Future<List<Map<String, dynamic>>> _remocoesParaApi(Database db, String idLevantamento) async {
+    final rows = await db.query('remocoes_pendentes', where: 'id_levantamento = ?', whereArgs: [idLevantamento]);
+    return rows.map((r) {
+      final tabela = r['tabela'] as String;
+      return {
+        'TABELA': _sheetPorTabelaLocal[tabela] ?? tabela.toUpperCase(),
+        'ID': r['id_registro'],
+      };
+    }).toList();
   }
 
   Map<String, dynamic> _levantamentoParaApi(Map<String, Object?> row) => {
@@ -449,6 +505,20 @@ class LevantamentoSyncService {
     if (id == null || id.isEmpty) return;
     final locais = await txn.query(tabela, where: 'id = ?', whereArgs: [id], limit: 1);
     if (locais.isNotEmpty && locais.first['sync_status'] == 'pending') return;
+
+    // Guard contra ressuscitar remoção (2026-09-14, fix do bug "ambiente
+    // removido volta sozinho" — ver RemocoesPendentesRepository): esta
+    // linha foi apagada aqui neste aparelho e ainda não teve a remoção
+    // confirmada pelo servidor (push ainda não rodou, ou falhou) — o pull
+    // NUNCA deve reinserir ela enquanto isso, mesmo que o servidor ainda a
+    // tenha. Continua tentando apagar de verdade no próximo push.
+    final remocaoPendente = await txn.query(
+      'remocoes_pendentes',
+      where: 'tabela = ? AND id_registro = ?',
+      whereArgs: [tabela, id],
+      limit: 1,
+    );
+    if (remocaoPendente.isNotEmpty) return;
 
     final valores = converter(remoto);
     valores['sync_status'] = 'synced';

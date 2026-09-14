@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import '../../data/local/ambientes_repository.dart';
 import '../../data/local/equipamentos_repository.dart';
+import '../../data/levantamento_sync_service.dart';
 import '../../data/remote/auth_service.dart';
 import '../levantamento/catalogo_picker_sheet.dart';
 import '../levantamento/equipamento_form_screen.dart';
@@ -113,10 +116,8 @@ class _AmbienteDetailScreenState extends State<AmbienteDetailScreen> {
     final avisoConteudo = totalItens > 0
         ? 'Este ambiente tem ${_equipamentos.length} equipamento(s) e ${_inserviveis.length} inservível(is) '
             'cadastrados. Remover o ambiente remove tudo isso junto.\n\n'
-            'Isso remove só deste aparelho. Se algo aqui já tiver sido sincronizado antes, '
-            'pode voltar a aparecer numa próxima sincronização.'
-        : 'Isso remove só deste aparelho. Se esse ambiente já tiver sido sincronizado antes, '
-            'ele pode voltar a aparecer aqui numa próxima sincronização.';
+            'A remoção é enviada pro servidor no próximo sync — com internet, quase na hora.'
+        : 'A remoção é enviada pro servidor no próximo sync — com internet, quase na hora.';
 
     final confirmou = await showDialog<bool>(
       context: context,
@@ -172,6 +173,14 @@ class _AmbienteDetailScreenState extends State<AmbienteDetailScreen> {
       matricula: widget.session.matricula,
       nomeTecnico: widget.session.nome,
     );
+    // Sobe a remoção pro servidor na hora (2026-09-14, mesmo padrão de
+    // LevantamentoScreen._pushImediato) — sem isso, o tombstone gravado em
+    // removerComCascata só subiria no próximo sync periódico/manual, e até
+    // lá outros aparelhos continuariam vendo o ambiente removido (o guard
+    // no merge só evita ele reaparecer NESTE aparelho).
+    unawaited(LevantamentoSyncService().pushPendentes(widget.session).catchError((_) {
+      return const PushResult(levantamentosEnviados: 0, avisos: []);
+    }));
     if (!mounted) return;
     Navigator.of(context).pop();
   }

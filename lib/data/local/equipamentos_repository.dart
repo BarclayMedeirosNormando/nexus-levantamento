@@ -2,6 +2,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import 'atividades_repository.dart';
 import 'database.dart';
+import 'remocoes_pendentes_repository.dart';
 
 class Equipamento {
   final String id;
@@ -378,6 +379,13 @@ class EquipamentosRepository {
         tombamentoNovo: null,
         numSerieNovo: null,
       );
+      // Tombstone (2026-09-14) — ver RemocoesPendentesRepository: sem isto,
+      // um equipamento já sincronizado voltava no próximo pull.
+      await RemocoesPendentesRepository().registrar(
+        tabela: 'equipamentos',
+        idRegistro: id,
+        idLevantamento: equipamento.idLevantamento,
+      );
       await AtividadesRepository().registrar(
         idLevantamento: equipamento.idLevantamento,
         inep: equipamento.inep,
@@ -461,6 +469,12 @@ class EquipamentosRepository {
     await db.delete('equipamentos_inserviveis', where: 'id = ?', whereArgs: [id]);
     if (rows.isNotEmpty) {
       final inservivel = EquipamentoInservivel.fromRow(rows.first);
+      // Tombstone (2026-09-14) — ver RemocoesPendentesRepository.
+      await RemocoesPendentesRepository().registrar(
+        tabela: 'equipamentos_inserviveis',
+        idRegistro: id,
+        idLevantamento: inservivel.idLevantamento,
+      );
       await AtividadesRepository().registrar(
         idLevantamento: inservivel.idLevantamento,
         inep: inservivel.inep,

@@ -51,7 +51,7 @@ class AppDatabase {
   // exige internet), sincronizada depois via push/pull igual
   // fotos_levantamento (ver AtividadesRepository e
   // LevantamentoSyncService). So cresce (nunca e editada nem apagada).
-  static const _dbVersion = 5;
+  static const _dbVersion = 6;
 
   Database? _db;
 
@@ -131,6 +131,26 @@ class AppDatabase {
             )
           ''');
           await db.execute('CREATE INDEX idx_atividades_lv ON atividades(id_levantamento)');
+        }
+        if (oldVersion < 6) {
+          // remocoes_pendentes (2026-09-14) — "tombstone" de remoção ainda
+          // não confirmada pelo servidor. Fecha o bug "removo um ambiente e
+          // ele volta sozinho depois de uns segundos" (Barclay): até aqui
+          // nenhuma remoção (Ambiente/Equipamento/Inservível/Conectividade/
+          // Wifi/Foto) era comunicada pro servidor — só sumia localmente. Ver
+          // RemocoesPendentesRepository e LevantamentoSyncService (payload
+          // `remocoes` do push, guard no merge do pull).
+          await db.execute('''
+            CREATE TABLE remocoes_pendentes (
+              id TEXT PRIMARY KEY,
+              tabela TEXT NOT NULL,
+              id_registro TEXT NOT NULL,
+              id_levantamento TEXT NOT NULL,
+              criado_em TEXT
+            )
+          ''');
+          await db.execute('CREATE INDEX idx_remocoes_pendentes_lv ON remocoes_pendentes(id_levantamento)');
+          await db.execute('CREATE INDEX idx_remocoes_pendentes_registro ON remocoes_pendentes(tabela, id_registro)');
         }
       },
     );
@@ -358,6 +378,18 @@ class AppDatabase {
       )
     ''');
     batch.execute('CREATE INDEX idx_atividades_lv ON atividades(id_levantamento)');
+
+    batch.execute('''
+      CREATE TABLE remocoes_pendentes (
+        id TEXT PRIMARY KEY,
+        tabela TEXT NOT NULL,
+        id_registro TEXT NOT NULL,
+        id_levantamento TEXT NOT NULL,
+        criado_em TEXT
+      )
+    ''');
+    batch.execute('CREATE INDEX idx_remocoes_pendentes_lv ON remocoes_pendentes(id_levantamento)');
+    batch.execute('CREATE INDEX idx_remocoes_pendentes_registro ON remocoes_pendentes(tabela, id_registro)');
 
     // ---------------------------------------------------------------------
     // Índice leve de duplicidade (tombamento/série) — checagem instantânea

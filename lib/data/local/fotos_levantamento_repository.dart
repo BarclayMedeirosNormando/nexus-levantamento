@@ -2,6 +2,7 @@ import 'package:uuid/uuid.dart';
 
 import 'atividades_repository.dart';
 import 'database.dart';
+import 'remocoes_pendentes_repository.dart';
 
 /// FOTOS (2026-09-14) — galeria geral do levantamento (nível da escola, não
 /// amarrada a um equipamento específico como as fotos de etiqueta/equipamento
@@ -126,6 +127,12 @@ class FotosLevantamentoRepository {
     await db.delete('fotos_levantamento', where: 'id = ?', whereArgs: [id]);
     if (rows.isNotEmpty) {
       final foto = FotoLevantamento.fromRow(rows.first);
+      // Tombstone (2026-09-14) — ver RemocoesPendentesRepository.
+      await RemocoesPendentesRepository().registrar(
+        tabela: 'fotos_levantamento',
+        idRegistro: id,
+        idLevantamento: foto.idLevantamento,
+      );
       await AtividadesRepository().registrar(
         idLevantamento: foto.idLevantamento,
         inep: foto.inep,

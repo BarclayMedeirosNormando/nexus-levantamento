@@ -1,6 +1,7 @@
 import 'package:uuid/uuid.dart';
 import 'atividades_repository.dart';
 import 'database.dart';
+import 'remocoes_pendentes_repository.dart';
 
 class AmbientePadrao {
   final String idTipoAmbiente;
@@ -175,11 +176,12 @@ class AmbientesRepository {
   ///   com quantos equipamentos/inserviveis foram junto — é isso que
   ///   alimenta a tela de Atividades pro ADM ver quem removeu o quê.
   ///
-  /// Só local — mesmo caveat de todo `remover()` deste app: o backend nunca
-  /// apaga linha nenhuma (`upsertRows` só adiciona/atualiza), então se este
-  /// ambiente (ou algo dentro dele) já tinha sido sincronizado antes, ele
-  /// continua existindo na planilha e pode voltar num próximo pull vindo
-  /// de outro aparelho — avisado na tela antes de confirmar.
+  /// Sincronizada de verdade (2026-09-14) — grava um tombstone em
+  /// `remocoes_pendentes` pra cada linha apagada (ambiente + equipamentos +
+  /// inservíveis), na MESMA transação do delete local. `LevantamentoSyncService`
+  /// manda esses tombstones no próximo push e o backend (`deletarLinhasPorId`)
+  /// apaga de fato as linhas na planilha — resolve o bug antigo de "remover
+  /// aqui não avisava o servidor, e um pull seguinte trazia de volta".
   Future<void> removerComCascata({
     required String id,
     required String matricula,
@@ -197,6 +199,7 @@ class AmbientesRepository {
     final equipamentos = await db.query('equipamentos', where: 'id_ambiente = ?', whereArgs: [id]);
     final inserviveis = await db.query('equipamentos_inserviveis', where: 'id_ambiente = ?', whereArgs: [id]);
 
+    final agoraRemocao = DateTime.now().toIso8601String();
     await db.transaction((txn) async {
       for (final equip in equipamentos) {
         final tombamento = equip['tombamento'] as String?;
@@ -215,6 +218,25 @@ class AmbientesRepository {
             whereArgs: ['NUM_SERIE|${numSerie.trim().toUpperCase()}'],
           );
         }
+        // Tombstone (2026-09-14) — ver RemocoesPendentesRepository: sem
+        // isto, um equipamento já sincronizado voltava no próximo pull
+        // mesmo tendo sido apagado aqui junto com o ambiente.
+        await txn.insert('remocoes_pendentes', {
+          'id': _uuid.v4(),
+          'tabela': 'equipamentos',
+          'id_registro': equip['id'] as String,
+          'id_levantamento': idLevantamento,
+          'criado_em': agoraRemocao,
+        });
+      }
+      for (final inservivel in inserviveis) {
+        await txn.insert('remocoes_pendentes', {
+          'id': _uuid.v4(),
+          'tabela': 'equipamentos_inserviveis',
+          'id_registro': inservivel['id'] as String,
+          'id_levantamento': idLevantamento,
+          'criado_em': agoraRemocao,
+        });
       }
       await txn.delete('equipamentos', where: 'id_ambiente = ?', whereArgs: [id]);
       await txn.delete('equipamentos_inserviveis', where: 'id_ambiente = ?', whereArgs: [id]);
@@ -229,6 +251,14 @@ class AmbientesRepository {
         whereArgs: [id],
       );
       await txn.delete('ambientes', where: 'id = ?', whereArgs: [id]);
+      // Tombstone do próprio ambiente — ver comentário acima.
+      await txn.insert('remocoes_pendentes', {
+        'id': _uuid.v4(),
+        'tabela': 'ambientes',
+        'id_registro': id,
+        'id_levantamento': idLevantamento,
+        'criado_em': agoraRemocao,
+      });
     });
 
     final partes = <String>[nomeAmbiente];

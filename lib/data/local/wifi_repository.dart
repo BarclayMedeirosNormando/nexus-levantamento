@@ -1,6 +1,7 @@
 import 'package:uuid/uuid.dart';
 import 'atividades_repository.dart';
 import 'database.dart';
+import 'remocoes_pendentes_repository.dart';
 
 class RedeWifi {
   final String id;
@@ -110,6 +111,12 @@ class WifiRepository {
     await db.delete('wifi', where: 'id = ?', whereArgs: [id]);
     if (rows.isNotEmpty) {
       final rede = RedeWifi.fromRow(rows.first);
+      // Tombstone (2026-09-14) — ver RemocoesPendentesRepository.
+      await RemocoesPendentesRepository().registrar(
+        tabela: 'wifi',
+        idRegistro: id,
+        idLevantamento: rede.idLevantamento,
+      );
       await AtividadesRepository().registrar(
         idLevantamento: rede.idLevantamento,
         inep: rede.inep,

@@ -96,6 +96,16 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
     if (_atualizandoEmSegundoPlano || !mounted) return;
     _atualizandoEmSegundoPlano = true;
     try {
+      // Push ANTES do pull (2026-09-14, fix do bug "removo o ambiente e ele
+      // volta sozinho depois de uns segundos", relatado pelo Barclay): sem
+      // isso, uma remoção feita aqui mesmo podia ainda não ter chegado no
+      // servidor quando o pull seguinte rodava, 25s depois. Best-effort e
+      // silencioso igual o pull logo abaixo — sem rede agora, tenta de novo
+      // no próximo ciclo. A garantia de verdade contra reaparecer é o guard
+      // em LevantamentoSyncService._mergeLinhaSimples (funciona mesmo que
+      // este push falhe ou não dê tempo de terminar antes do pull).
+      await _syncService.pushPendentes(widget.session);
+      if (!mounted) return;
       await _syncService.pullLevantamentosAtivos(widget.session);
       if (!mounted) return;
       await _recarregarAmbientesCriados();

@@ -1,6 +1,7 @@
 import 'package:uuid/uuid.dart';
 import 'atividades_repository.dart';
 import 'database.dart';
+import 'remocoes_pendentes_repository.dart';
 
 /// '' → null. Uma célula em branco do Google Sheets chega no JSON do
 /// backend como string vazia, não `null` — sem essa normalização, campos
@@ -268,6 +269,12 @@ class ConectividadeRepository {
     await db.delete('conectividade', where: 'id = ?', whereArgs: [id]);
     if (rows.isNotEmpty) {
       final link = Conectividade.fromRow(rows.first);
+      // Tombstone (2026-09-14) — ver RemocoesPendentesRepository.
+      await RemocoesPendentesRepository().registrar(
+        tabela: 'conectividade',
+        idRegistro: id,
+        idLevantamento: link.idLevantamento,
+      );
       await AtividadesRepository().registrar(
         idLevantamento: link.idLevantamento,
         inep: link.inep,
