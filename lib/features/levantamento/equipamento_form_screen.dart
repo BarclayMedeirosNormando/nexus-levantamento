@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/theme.dart';
@@ -111,19 +112,41 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
 
   // -- Foto / OCR / código de barras --------------------------------------
 
+  /// 2026-09-14: agora com try/catch — antes, se a permissão de câmera
+  /// estivesse negada (ou qualquer outra falha do image_picker), a exceção
+  /// não era tratada e o técnico via a tela de erro vermelha do Flutter em
+  /// vez de uma mensagem explicando o que fazer. Isso também pode ter sido
+  /// a origem do "ícone de exclamação" relatado em campo ao tirar foto da
+  /// etiqueta (de onde saem tombamento e número de série via OCR).
   Future<void> _tirarFoto({required bool etiqueta}) async {
-    final XFile? arquivo = await _picker.pickImage(
-      source: ImageSource.camera,
-      maxWidth: 1600,
-      imageQuality: 85,
-    );
+    final XFile? arquivo;
+    try {
+      arquivo = await _picker.pickImage(
+        source: ImageSource.camera,
+        maxWidth: 1600,
+        imageQuality: 85,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final negada = e is PlatformException && e.code == 'camera_access_denied';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            negada
+                ? 'Permissão de câmera negada. Habilite a Câmera nas configurações do Android para o app Nexus Levantamento.'
+                : 'Não foi possível abrir a câmera. Tente de novo.',
+          ),
+        ),
+      );
+      return;
+    }
     if (arquivo == null || !mounted) return;
     setState(() {
       if (etiqueta) {
-        _fotoEtiquetaPath = arquivo.path;
+        _fotoEtiquetaPath = arquivo!.path;
         _linhasOcr = const [];
       } else {
-        _fotoEquipamentoPath = arquivo.path;
+        _fotoEquipamentoPath = arquivo!.path;
       }
     });
     // OCR só faz sentido na foto da etiqueta (é onde ficam tombamento/série
@@ -186,12 +209,22 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
     });
   }
 
-  Future<void> _abrirScanner() async {
+  /// 2026-09-14: agora aceita [numSerie] pra reaproveitar a mesma tela de
+  /// scanner tanto pro botão do Tombamento quanto pro do Nº de Série (antes
+  /// só o Tombamento tinha o botão de ler código de barras — reportado em
+  /// campo como o campo de Nº de Série "não é igual ao" de Tombamento).
+  Future<void> _abrirScanner({required bool numSerie}) async {
     final codigo = await Navigator.of(context).push<String>(
       MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()),
     );
     if (codigo == null || !mounted) return;
-    setState(() => _tombamentoController.text = codigo);
+    setState(() {
+      if (numSerie) {
+        _numSerieController.text = codigo;
+      } else {
+        _tombamentoController.text = codigo;
+      }
+    });
   }
 
   // -- Duplicidade / salvar -------------------------------------------------
@@ -340,7 +373,7 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
                 color: AppColors.primarySoft,
                 borderRadius: BorderRadius.circular(10),
                 child: IconButton(
-                  onPressed: _abrirScanner,
+                  onPressed: () => _abrirScanner(numSerie: false),
                   icon: const Icon(Icons.qr_code_scanner, size: 20, color: AppColors.primary),
                   tooltip: 'Ler código de barras',
                 ),
@@ -351,7 +384,27 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
 
           const Text('Nº DE SÉRIE', style: _labelStyle),
           const SizedBox(height: 6),
-          TextField(controller: _numSerieController, textCapitalization: TextCapitalization.characters),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _numSerieController,
+                  textCapitalization: TextCapitalization.characters,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Material(
+                color: AppColors.primarySoft,
+                borderRadius: BorderRadius.circular(10),
+                child: IconButton(
+                  onPressed: () => _abrirScanner(numSerie: true),
+                  icon: const Icon(Icons.qr_code_scanner, size: 20, color: AppColors.primary),
+                  tooltip: 'Ler código de barras',
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 16),
 
           _buildFotoTile(
