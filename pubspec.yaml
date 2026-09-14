@@ -28,7 +28,14 @@ dependencies:
 
   # Captura em campo
   image_picker: ^1.1.2
-  mobile_scanner: ^5.1.1
+  # 2026-09-14: preso em 5.1.1 dava "Nao foi possivel abrir a camera"
+  # (genericError, NullPointerException nativa) em release, reproduzido em
+  # Xiaomi e Samsung reais - bem parecido com o bug de paginas de memoria
+  # de 16KB corrigido no CameraX empacotado a partir da 6.0.11 do plugin
+  # (changelog: "Update camerax dependencies to support 16KB pages sizes").
+  # Sem breaking change de API entre 5.1.1 e 6.0.11 (o churn do errorBuilder
+  # foi so na 5.0.0-beta, revertido antes da 5.1.0).
+  mobile_scanner: ^6.0.11
   flutter_image_compress: ^2.3.0
   geolocator: ^12.0.0
   signature: ^5.5.0
