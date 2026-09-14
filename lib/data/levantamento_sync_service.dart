@@ -243,6 +243,43 @@ class LevantamentoSyncService {
       };
 
   // ---------------------------------------------------------------------
+  // REABRIR (ADM)
+  // ---------------------------------------------------------------------
+
+  /// Reabre um levantamento concluído (2026-09-14) — faltava por completo
+  /// no app: o backend (`actionReabrirLevantamento`) já existia pronto, mas
+  /// nenhuma tela chamava. Pede re-autenticação do ADM (matrícula+senha),
+  /// igual o próprio backend exige — não usa `session.token`: o servidor
+  /// reautentica do zero, não confia na sessão já aberta pra essa ação
+  /// (mesmo raciocínio de `actionResetarSenha`/reabrir ser um ato sensível).
+  /// Depois do servidor confirmar, atualiza o registro local na hora (não
+  /// espera o próximo pull) — assim some da lista de Concluídos
+  /// imediatamente; um pull seguinte traz REABERTO_POR/DATA_REABERTURA
+  /// definitivos, mas isso não bloqueia a UI aqui.
+  Future<void> reabrirLevantamento({
+    required String idLevantamento,
+    required String matriculaAdm,
+    required String senhaAdm,
+  }) async {
+    final resposta = await _api.call('reabrir_levantamento', {
+      'id_levantamento': idLevantamento,
+      'matricula_adm': matriculaAdm,
+      'senha_adm': senhaAdm,
+    });
+    if (resposta['ok'] != true) {
+      throw ApiException(resposta['error']?.toString() ?? 'Não foi possível reabrir o levantamento.');
+    }
+
+    final db = await AppDatabase.instance.database;
+    await db.update(
+      'levantamentos',
+      {'status': 'em_andamento', 'sync_status': 'synced'},
+      where: 'id = ?',
+      whereArgs: [idLevantamento],
+    );
+  }
+
+  // ---------------------------------------------------------------------
   // PULL
   // ---------------------------------------------------------------------
 

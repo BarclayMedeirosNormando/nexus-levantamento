@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
+import '../../data/levantamento_sync_service.dart';
 import '../../data/local/levantamentos_repository.dart';
+import '../../data/remote/api_client.dart';
 import '../../data/remote/auth_service.dart';
 import '../levantamento/levantamento_screen.dart';
 
@@ -9,10 +11,14 @@ import '../levantamento/levantamento_screen.dart';
 /// `home_screen.dart`), pra não precisar espremer tudo inline na tela
 /// principal (que só mostrava "em andamento", sem nunca ter tido uma visão
 /// de concluídos). Cada item abre o mesmo `LevantamentoScreen` de sempre —
-/// não existe uma tela de "visualização" separada; concluído reaberto pelo
-/// próprio ADM (ver ConclusaoScreen/backend `reabrir_levantamento`) volta a
-/// aparecer normalmente em "Em andamento" no próximo carregamento da Home.
-class LevantamentosListaScreen extends StatelessWidget {
+/// não existe uma tela de "visualização" separada.
+///
+/// Reabrir (2026-09-14) — só ADM, só nos concluídos (ver `_ItemCard`):
+/// pedido do Barclay depois de notar que o backend já tinha
+/// `reabrir_levantamento` pronto, mas nenhuma tela chamava. Precisou virar
+/// StatefulWidget (antes era Stateless recebendo `itens` fixo da Home) pra
+/// poder tirar o item da lista na hora, sem esperar a Home recarregar.
+class LevantamentosListaScreen extends StatefulWidget {
   const LevantamentosListaScreen({
     super.key,
     required this.titulo,
@@ -25,10 +31,21 @@ class LevantamentosListaScreen extends StatelessWidget {
   final Session session;
 
   @override
+  State<LevantamentosListaScreen> createState() => _LevantamentosListaScreenState();
+}
+
+class _LevantamentosListaScreenState extends State<LevantamentosListaScreen> {
+  late final List<LevantamentoComEscola> _itens = List.of(widget.itens);
+
+  void _removerDaLista(LevantamentoComEscola item) {
+    setState(() => _itens.remove(item));
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('$titulo (${itens.length})')),
-      body: itens.isEmpty
+      appBar: AppBar(title: Text('${widget.titulo} (${_itens.length})')),
+      body: _itens.isEmpty
           ? const Center(
               child: Padding(
                 padding: EdgeInsets.all(32),
@@ -41,36 +58,127 @@ class LevantamentosListaScreen extends StatelessWidget {
           : FadeIn(
               child: ListView.separated(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                itemCount: itens.length,
+                itemCount: _itens.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
-                itemBuilder: (context, index) => _ItemCard(item: itens[index], session: session),
+                itemBuilder: (context, index) => _ItemCard(
+                  item: _itens[index],
+                  session: widget.session,
+                  onReaberto: () => _removerDaLista(_itens[index]),
+                ),
               ),
             ),
     );
   }
 }
 
-class _ItemCard extends StatelessWidget {
-  const _ItemCard({required this.item, required this.session});
+class _ItemCard extends StatefulWidget {
+  const _ItemCard({required this.item, required this.session, required this.onReaberto});
   final LevantamentoComEscola item;
   final Session session;
+  final VoidCallback onReaberto;
+
+  @override
+  State<_ItemCard> createState() => _ItemCardState();
+}
+
+class _ItemCardState extends State<_ItemCard> {
+  final _syncService = LevantamentoSyncService();
+  bool _reabrindo = false;
+
+  bool get _concluido => widget.item.levantamento.status == 'concluido';
+
+  Future<void> _abrirLevantamento() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => LevantamentoScreen(
+          escola: widget.item.escola,
+          levantamento: widget.item.levantamento,
+          session: widget.session,
+        ),
+      ),
+    );
+  }
+
+  // Pede a senha do próprio ADM logado (matrícula já vem preenchida — é
+  // sempre quem está com a sessão aberta, mesma exigência do backend) e
+  // chama reabrirLevantamento. Diálogo simples (AlertDialog), mesmo padrão
+  // já usado em WifiScreen/ConectividadeFormEscolaScreen pra senha com
+  // botão de mostrar/esconder.
+  Future<void> _confirmarReabertura() async {
+    final senhaController = TextEditingController();
+    var senhaVisivel = false;
+
+    final confirmou = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Reabrir levantamento'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${widget.item.escola.nome} volta para "Em andamento". '
+                'Confirme sua senha de ADM (matrícula ${widget.session.matricula}) para continuar.',
+                style: const TextStyle(fontSize: 13, color: AppColors.muted),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: senhaController,
+                autofocus: true,
+                obscureText: !senhaVisivel,
+                decoration: InputDecoration(
+                  labelText: 'Sua senha',
+                  suffixIcon: IconButton(
+                    icon: Icon(senhaVisivel ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 18),
+                    onPressed: () => setDialogState(() => senhaVisivel = !senhaVisivel),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancelar')),
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Reabrir')),
+          ],
+        ),
+      ),
+    );
+    if (confirmou != true || !mounted) return;
+
+    final senha = senhaController.text;
+    if (senha.isEmpty) {
+      AppSnackbar.aviso(context, 'Informe sua senha.');
+      return;
+    }
+
+    setState(() => _reabrindo = true);
+    try {
+      await _syncService.reabrirLevantamento(
+        idLevantamento: widget.item.levantamento.id,
+        matriculaAdm: widget.session.matricula,
+        senhaAdm: senha,
+      );
+      if (!mounted) return;
+      AppSnackbar.sucesso(context, '${widget.item.escola.nome} reaberto — voltou para "Em andamento".');
+      widget.onReaberto();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      AppSnackbar.erro(context, e.message);
+    } catch (e) {
+      if (!mounted) return;
+      AppSnackbar.erro(context, 'Erro inesperado: $e');
+    } finally {
+      if (mounted) setState(() => _reabrindo = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final concluido = item.levantamento.status == 'concluido';
+    final concluido = _concluido;
     return InkWell(
       borderRadius: BorderRadius.circular(14),
-      onTap: () {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => LevantamentoScreen(
-              escola: item.escola,
-              levantamento: item.levantamento,
-              session: session,
-            ),
-          ),
-        );
-      },
+      onTap: _abrirLevantamento,
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
@@ -87,30 +195,44 @@ class _ItemCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    item.escola.nome,
+                    widget.item.escola.nome,
                     style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.ink),
                     overflow: TextOverflow.ellipsis,
                   ),
-                  if (item.escola.municipio != null)
+                  if (widget.item.escola.municipio != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 2),
                       child: Text(
-                        item.escola.municipio!,
+                        widget.item.escola.municipio!,
                         style: const TextStyle(fontSize: 12, color: AppColors.muted),
                       ),
                     ),
-                  if (session.isAdm && item.levantamento.tecnicoAbertura.isNotEmpty)
+                  if (widget.session.isAdm && widget.item.levantamento.tecnicoAbertura.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
                       child: Text(
-                        'Técnico: ${item.levantamento.tecnicoAbertura}',
+                        'Técnico: ${widget.item.levantamento.tecnicoAbertura}',
                         style: const TextStyle(fontSize: 11, color: AppColors.muted),
                       ),
                     ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
+            if (concluido && widget.session.isAdm)
+              TextButton.icon(
+                onPressed: _reabrindo ? null : _confirmarReabertura,
+                icon: _reabrindo
+                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.lock_open_rounded, size: 16),
+                label: const Text('Reabrir'),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  visualDensity: VisualDensity.compact,
+                ),
+              )
+            else
+              const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
           ],
         ),
       ),
