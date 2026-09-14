@@ -56,6 +56,7 @@ class LevantamentoSyncService {
     'equipamentos_inserviveis',
     'conectividade',
     'wifi',
+    'fotos_levantamento',
   ];
 
   // ---------------------------------------------------------------------
@@ -90,6 +91,7 @@ class LevantamentoSyncService {
         'equipamentos_inserviveis': await _linhasParaApi(db, 'equipamentos_inserviveis', idLevantamento, _inservivelParaApi),
         'conectividade': await _linhasParaApi(db, 'conectividade', idLevantamento, _conectividadeParaApi),
         'wifi': await _linhasParaApi(db, 'wifi', idLevantamento, _wifiParaApi),
+        'fotos': await _linhasParaApi(db, 'fotos_levantamento', idLevantamento, _fotoParaApi),
       };
 
       final resposta = await _api.call('push_levantamento', payload);
@@ -229,6 +231,17 @@ class LevantamentoSyncService {
         'CRIADO_POR': row['criado_por'],
       };
 
+  Map<String, dynamic> _fotoParaApi(Map<String, Object?> row) => {
+        'ID': row['id'],
+        'TIPO_FOTO': row['tipo_foto'],
+        'OUTRO_TIPO_FOTO': row['outro_tipo_foto'],
+        'DESCRICAO': row['descricao'],
+        'FOTO_URL': row['foto_url'],
+        'CRIADO_POR': row['criado_por'],
+        // foto_local_path nunca vai pro servidor — é só o caminho do
+        // arquivo neste aparelho (ver FotosLevantamentoRepository).
+      };
+
   // ---------------------------------------------------------------------
   // PULL
   // ---------------------------------------------------------------------
@@ -254,6 +267,7 @@ class LevantamentoSyncService {
     final inserviveis = (resposta['equipamentos_inserviveis'] as List?) ?? const [];
     final conectividade = (resposta['conectividade'] as List?) ?? const [];
     final wifi = (resposta['wifi'] as List?) ?? const [];
+    final fotos = (resposta['fotos'] as List?) ?? const [];
 
     final db = await AppDatabase.instance.database;
     await db.transaction((txn) async {
@@ -274,6 +288,9 @@ class LevantamentoSyncService {
       }
       for (final item in wifi) {
         await _mergeLinhaSimples(txn, 'wifi', item as Map<String, dynamic>, _wifiParaLocal);
+      }
+      for (final item in fotos) {
+        await _mergeLinhaSimples(txn, 'fotos_levantamento', item as Map<String, dynamic>, _fotoParaLocal);
       }
       for (final item in auxiliares) {
         await _mergeAuxiliar(txn, item as Map<String, dynamic>);
@@ -433,6 +450,28 @@ class LevantamentoSyncService {
         'inep': remoto['INEP'],
         'ssid': remoto['SSID'],
         'senha': remoto['SENHA'],
+        'criado_por': remoto['CRIADO_POR'],
+        'criado_em': remoto['CRIADO_EM']?.toString(),
+        'atualizado_em': remoto['ATUALIZADO_EM']?.toString(),
+      };
+
+  // foto_local_path fica de fora de propósito (não existe no servidor —
+  // ver _fotoParaApi). Mesmo caveat já conhecido do merge de equipamentos
+  // (_equipamentoParaLocal também não inclui os *_local_path): se este
+  // aparelho tiver tirado a foto mas ainda não subido (upload falhou/sem
+  // tempo) E o próprio push já tiver marcado a linha como 'synced' antes do
+  // upload terminar, um pull seguinte pode apagar a referência ao arquivo
+  // local ainda não enviado. Janela estreita (upload roda ANTES do push no
+  // SyncEngine — ver sincronizarTudo), não resolvida aqui; mesma pendência
+  // que já existia pras fotos de equipamento.
+  Map<String, Object?> _fotoParaLocal(Map<String, dynamic> remoto) => {
+        'id': remoto['ID'],
+        'id_levantamento': remoto['ID_LEVANTAMENTO'],
+        'inep': remoto['INEP'],
+        'tipo_foto': remoto['TIPO_FOTO'],
+        'outro_tipo_foto': remoto['OUTRO_TIPO_FOTO'],
+        'descricao': remoto['DESCRICAO'],
+        'foto_url': remoto['FOTO_URL'],
         'criado_por': remoto['CRIADO_POR'],
         'criado_em': remoto['CRIADO_EM']?.toString(),
         'atualizado_em': remoto['ATUALIZADO_EM']?.toString(),

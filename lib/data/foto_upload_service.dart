@@ -107,6 +107,10 @@ class FotoUploadService {
       }
     }
 
+    final galeria = await _enviarFotosLevantamentoPendentes(session);
+    enviadas += galeria.enviadas;
+    falhas += galeria.falhas;
+
     return FotoUploadResult(enviadas: enviadas, falhas: falhas);
   }
 
@@ -123,6 +127,74 @@ class FotoUploadService {
       ''');
       total += (resultado.first['c'] as int?) ?? 0;
     }
+    final resultadoGaleria = await db.rawQuery('''
+      SELECT COUNT(*) AS c FROM fotos_levantamento
+      WHERE foto_local_path IS NOT NULL AND foto_local_path != '' AND (foto_url IS NULL OR foto_url = '')
+    ''');
+    total += (resultadoGaleria.first['c'] as int?) ?? 0;
     return total;
+  }
+
+  /// Sobe fotos da galeria geral do levantamento (`fotos_levantamento` —
+  /// Fachada/Laboratório/Roteador/Equipamento/Documento/Outro, ver
+  /// `FotosLevantamentoRepository`). Mesmo mecanismo de [enviarPendentes]
+  /// pros campos de equipamento (`upload_foto`, compressão, um try/catch por
+  /// foto), só que cada LINHA já é uma foto (não duas colunas por linha) —
+  /// por isso um método separado em vez de reaproveitar [_campos].
+  Future<FotoUploadResult> _enviarFotosLevantamentoPendentes(Session session) async {
+    final db = await AppDatabase.instance.database;
+    var enviadas = 0;
+    var falhas = 0;
+
+    final rows = await db.query(
+      'fotos_levantamento',
+      columns: ['id', 'foto_local_path', 'tipo_foto'],
+      where: "foto_local_path IS NOT NULL AND foto_local_path != '' AND (foto_url IS NULL OR foto_url = '')",
+    );
+
+    for (final row in rows) {
+      final id = row['id'] as String;
+      final caminho = row['foto_local_path'] as String?;
+      if (caminho == null || caminho.isEmpty) continue;
+
+      try {
+        final arquivo = File(caminho);
+        if (!await arquivo.exists()) continue; // arquivo sumiu — nada a reenviar, não conta como falha
+
+        Uint8List? comprimido;
+        try {
+          comprimido = await FlutterImageCompress.compressWithFile(
+            caminho,
+            minWidth: 1280,
+            minHeight: 1280,
+            quality: 70,
+          );
+        } catch (_) {
+          comprimido = null;
+        }
+        final bytes = comprimido ?? await arquivo.readAsBytes();
+
+        final tipo = (row['tipo_foto'] as String? ?? 'foto').toLowerCase();
+        final resposta = await _api.call('upload_foto', {
+          'token': session.token,
+          'base64': base64Encode(bytes),
+          'nome_arquivo': '${tipo}_$id.jpg',
+          'mime_type': 'image/jpeg',
+        });
+
+        final url = resposta['ok'] == true ? resposta['url']?.toString() : null;
+        if (url == null || url.isEmpty) {
+          falhas++;
+          continue;
+        }
+
+        await db.update('fotos_levantamento', {'foto_url': url}, where: 'id = ?', whereArgs: [id]);
+        enviadas++;
+      } catch (_) {
+        falhas++;
+      }
+    }
+
+    return FotoUploadResult(enviadas: enviadas, falhas: falhas);
   }
 }

@@ -36,7 +36,15 @@ class AppDatabase {
   // continuam sendo a URL remota, só preenchida depois que FotoUploadService
   // sobe a foto — mesma filosofia offline-first do resto do app: tirar a
   // foto nunca exige internet na hora, só o upload (que roda no sync).
-  static const _dbVersion = 3;
+  // v4 (2026-09-14): nova tabela `fotos_levantamento` — galeria geral do
+  // levantamento (nivel da escola, nao de um equipamento especifico),
+  // replicando a aba FOTOS que ja existia na planilha "Nexus Inventario" do
+  // AppSheet (Fachada, Laboratorio, Roteador, Equipamento, Documento,
+  // Outro). Mesma filosofia das fotos de equipamento: tirar a foto grava
+  // so o caminho local (`foto_local_path`), nunca exige internet na hora;
+  // quem sobe pro Drive e preenche `foto_url` e o FotoUploadService, no
+  // sync (ver comentario de v3 acima e foto_upload_service.dart).
+  static const _dbVersion = 4;
 
   Database? _db;
 
@@ -80,6 +88,25 @@ class AppDatabase {
         if (oldVersion < 3) {
           await db.execute('ALTER TABLE equipamentos ADD COLUMN foto_etiqueta_local_path TEXT');
           await db.execute('ALTER TABLE equipamentos ADD COLUMN foto_equipamento_local_path TEXT');
+        }
+        if (oldVersion < 4) {
+          await db.execute('''
+            CREATE TABLE fotos_levantamento (
+              id TEXT PRIMARY KEY,
+              id_levantamento TEXT NOT NULL,
+              inep TEXT NOT NULL,
+              tipo_foto TEXT NOT NULL,
+              outro_tipo_foto TEXT,
+              descricao TEXT,
+              foto_url TEXT,
+              foto_local_path TEXT,
+              criado_por TEXT,
+              criado_em TEXT,
+              atualizado_em TEXT,
+              sync_status TEXT NOT NULL DEFAULT 'pending'
+            )
+          ''');
+          await db.execute('CREATE INDEX idx_fotos_levantamento_lv ON fotos_levantamento(id_levantamento)');
         }
       },
     );
@@ -273,6 +300,24 @@ class AppDatabase {
         sync_status TEXT NOT NULL DEFAULT 'pending'
       )
     ''');
+
+    batch.execute('''
+      CREATE TABLE fotos_levantamento (
+        id TEXT PRIMARY KEY,
+        id_levantamento TEXT NOT NULL,
+        inep TEXT NOT NULL,
+        tipo_foto TEXT NOT NULL,
+        outro_tipo_foto TEXT,
+        descricao TEXT,
+        foto_url TEXT,
+        foto_local_path TEXT,
+        criado_por TEXT,
+        criado_em TEXT,
+        atualizado_em TEXT,
+        sync_status TEXT NOT NULL DEFAULT 'pending'
+      )
+    ''');
+    batch.execute('CREATE INDEX idx_fotos_levantamento_lv ON fotos_levantamento(id_levantamento)');
 
     // ---------------------------------------------------------------------
     // Índice leve de duplicidade (tombamento/série) — checagem instantânea

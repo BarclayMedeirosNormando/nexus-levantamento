@@ -13,6 +13,7 @@ import 'adicionar_ambiente_screen.dart';
 import 'conectividade_screen.dart';
 import 'gerenciar_auxiliares_screen.dart';
 import 'conclusao_screen.dart';
+import 'fotos_levantamento_screen.dart';
 import 'wifi_screen.dart';
 
 /// Levantamento aberto (em_andamento). DATA_INICIO e LAT/LONG_ABERTURA já
@@ -254,6 +255,18 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
     );
   }
 
+  Future<void> _abrirFotos() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => FotosLevantamentoScreen(
+          escola: widget.escola,
+          levantamento: widget.levantamento,
+          matricula: widget.session.matricula,
+        ),
+      ),
+    );
+  }
+
   Future<void> _abrirConclusao() async {
     final concluido = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
@@ -280,6 +293,11 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
       appBar: AppBar(
         title: Text(widget.escola.nome),
         actions: [
+          IconButton(
+            onPressed: _carregando ? null : _abrirFotos,
+            icon: const Icon(Icons.photo_camera_outlined),
+            tooltip: 'Fotos do levantamento',
+          ),
           IconButton(
             onPressed: _carregando ? null : _abrirWifi,
             icon: const Icon(Icons.vpn_key),
