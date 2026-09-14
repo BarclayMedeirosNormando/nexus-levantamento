@@ -61,6 +61,10 @@ class SyncEngine {
     final push = await _levantamentoSyncService.pushPendentes(session);
     await _syncService.pullReferencia(session);
     final pull = await _levantamentoSyncService.pullLevantamentosAtivos(session);
+    // Só ADM (a chamada é um no-op pra técnico comum — ver
+    // pullLevantamentosConcluidos) — sem isso, "Concluídos" na Home do ADM
+    // só mostrava o que tinha sido concluído no próprio aparelho dele.
+    await _levantamentoSyncService.pullLevantamentosConcluidos(session);
 
     return SyncEngineResult(
       fotosEnviadas: fotos.enviadas,

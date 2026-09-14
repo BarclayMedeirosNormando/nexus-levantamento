@@ -254,8 +254,30 @@ class LevantamentoSyncService {
   /// traz a versão "oficial" já mesclada. Uma linha já sincronizada é
   /// livremente atualizada com o que veio do servidor (pode ter mudado lá
   /// por causa de um colega auxiliar).
-  Future<PullAtivosResult> pullLevantamentosAtivos(Session session) async {
-    final resposta = await _api.call('pull_levantamentos_ativos', {'token': session.token});
+  Future<PullAtivosResult> pullLevantamentosAtivos(Session session) {
+    return _pullEMesclar('pull_levantamentos_ativos', session);
+  }
+
+  /// Mesma mecânica de pull+merge do de cima, só que pros levantamentos já
+  /// CONCLUÍDOS (2026-09-14) — bug real relatado pelo Barclay: como ADM,
+  /// "Concluídos" nunca aparecia, a menos que tivesse sido concluído no
+  /// PRÓPRIO aparelho dele. Causa: `pull_levantamentos_ativos` no backend
+  /// nunca devolvia STATUS='concluido' pra ninguém (nem ADM) — pensado só
+  /// pro fluxo de levantamento em andamento. Este é um pull SEPARADO
+  /// (endpoint próprio `pull_levantamentos_concluidos`, só ADM — o backend
+  /// também revalida isso, ver actionPullLevantamentosConcluidos), chamado
+  /// só no sync completo (`SyncEngine.sincronizarTudo`), nunca no polling
+  /// de 25s de `LevantamentoScreen` (que só cuida do levantamento
+  /// em_andamento aberto agora — nem precisaria disto).
+  Future<PullAtivosResult> pullLevantamentosConcluidos(Session session) {
+    if (!session.isAdm) {
+      return Future.value(const PullAtivosResult(levantamentos: 0, ambientes: 0, auxiliares: 0));
+    }
+    return _pullEMesclar('pull_levantamentos_concluidos', session);
+  }
+
+  Future<PullAtivosResult> _pullEMesclar(String acao, Session session) async {
+    final resposta = await _api.call(acao, {'token': session.token});
     if (resposta['ok'] == false) {
       throw ApiException(resposta['error']?.toString() ?? 'Falha ao baixar levantamentos.');
     }
