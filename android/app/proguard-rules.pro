@@ -14,3 +14,27 @@
 -dontwarn com.google.mlkit.vision.text.devanagari.**
 -dontwarn com.google.mlkit.vision.text.japanese.**
 -dontwarn com.google.mlkit.vision.text.korean.**
+
+# 2026-09-14: scanner de codigo de barras (mobile_scanner) funcionava
+# perfeitamente em 'flutter run' (debug, sem minificacao) mas falhava com
+# "Nao foi possivel abrir a camera" / NullPointerException generica so em
+# 'flutter build apk --release' (com R8) - confirmado via logcat de debug
+# mostrando CameraX abrindo a camera com sucesso (Camera@...[id=0] OPEN,
+# captura configurada, TFLite/barhopper carregando o modelo de leitura de
+# codigo de barras normalmente). Classico sintoma de R8 removendo ou
+# renomeando algo que essas libs usam via reflection e que so quebra em
+# build minificado. mobile_scanner ja traz suas proprias consumer rules,
+# mas evidentemente nao cobre tudo - reforcando explicitamente aqui as 3
+# libs nativas envolvidas (CameraX, ML Kit barcode scanning bundled, e o
+# runtime TensorFlow Lite que elas usam por baixo).
+-keep class androidx.camera.** { *; }
+-dontwarn androidx.camera.**
+
+-keep class com.google.mlkit.vision.barcode.** { *; }
+-keep class com.google.mlkit.vision.codescanner.** { *; }
+-keep class com.google.android.gms.internal.mlkit_vision_barcode.** { *; }
+-dontwarn com.google.mlkit.vision.barcode.**
+-dontwarn com.google.android.gms.internal.mlkit_vision_barcode.**
+
+-keep class org.tensorflow.lite.** { *; }
+-dontwarn org.tensorflow.**
