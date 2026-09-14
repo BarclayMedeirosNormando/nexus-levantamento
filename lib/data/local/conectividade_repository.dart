@@ -1,4 +1,5 @@
 import 'package:uuid/uuid.dart';
+import 'atividades_repository.dart';
 import 'database.dart';
 
 /// '' → null. Uma célula em branco do Google Sheets chega no JSON do
@@ -120,6 +121,7 @@ class ConectividadeRepository {
     required String idLevantamento,
     required String inep,
     required String matricula,
+    String? nomeTecnico,
   }) async {
     final contratos = await listarContratosDaEscola(inep);
     if (contratos.isEmpty) return 0;
@@ -152,6 +154,19 @@ class ConectividadeRepository {
       });
     }
     await batch.commit(noResult: true);
+
+    await AtividadesRepository().registrar(
+      idLevantamento: idLevantamento,
+      inep: inep,
+      matricula: matricula,
+      nomeTecnico: nomeTecnico,
+      tipoEntidade: 'Conectividade',
+      acao: AtividadesRepository.acaoAdicionado,
+      descricao: faltantes.length == 1
+          ? 'Estado — ${faltantes.first.operadora ?? faltantes.first.idContrato}'
+          : '${faltantes.length} links de Estado criados',
+    );
+
     return faltantes.length;
   }
 
@@ -159,6 +174,7 @@ class ConectividadeRepository {
     required String idLevantamento,
     required String inep,
     required String matricula,
+    String? nomeTecnico,
     String? operadoraInformada,
     String? velocidadeContratadaInformada,
     double? velocidadeDownload,
@@ -182,6 +198,16 @@ class ConectividadeRepository {
       'atualizado_em': agora,
       'sync_status': 'pending',
     });
+
+    await AtividadesRepository().registrar(
+      idLevantamento: idLevantamento,
+      inep: inep,
+      matricula: matricula,
+      nomeTecnico: nomeTecnico,
+      tipoEntidade: 'Conectividade',
+      acao: AtividadesRepository.acaoAdicionado,
+      descricao: 'Escola${operadoraInformada != null && operadoraInformada.isNotEmpty ? " — $operadoraInformada" : ""}',
+    );
   }
 
   Future<void> atualizarLinkEscola({
@@ -236,8 +262,21 @@ class ConectividadeRepository {
     );
   }
 
-  Future<void> remover(String id) async {
+  Future<void> remover(String id, {required String matricula, String? nomeTecnico}) async {
     final db = await AppDatabase.instance.database;
+    final rows = await db.query('conectividade', where: 'id = ?', whereArgs: [id], limit: 1);
     await db.delete('conectividade', where: 'id = ?', whereArgs: [id]);
+    if (rows.isNotEmpty) {
+      final link = Conectividade.fromRow(rows.first);
+      await AtividadesRepository().registrar(
+        idLevantamento: link.idLevantamento,
+        inep: link.inep,
+        matricula: matricula,
+        nomeTecnico: nomeTecnico,
+        tipoEntidade: 'Conectividade',
+        acao: AtividadesRepository.acaoRemovido,
+        descricao: '${link.tipoPagamento}${link.operadora != null && link.operadora!.isNotEmpty ? " — ${link.operadora}" : ""}',
+      );
+    }
   }
 }

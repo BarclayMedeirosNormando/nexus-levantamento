@@ -57,6 +57,7 @@ class LevantamentoSyncService {
     'conectividade',
     'wifi',
     'fotos_levantamento',
+    'atividades',
   ];
 
   // ---------------------------------------------------------------------
@@ -92,6 +93,7 @@ class LevantamentoSyncService {
         'conectividade': await _linhasParaApi(db, 'conectividade', idLevantamento, _conectividadeParaApi),
         'wifi': await _linhasParaApi(db, 'wifi', idLevantamento, _wifiParaApi),
         'fotos': await _linhasParaApi(db, 'fotos_levantamento', idLevantamento, _fotoParaApi),
+        'atividades': await _linhasParaApi(db, 'atividades', idLevantamento, _atividadeParaApi),
       };
 
       final resposta = await _api.call('push_levantamento', payload);
@@ -242,6 +244,16 @@ class LevantamentoSyncService {
         // arquivo neste aparelho (ver FotosLevantamentoRepository).
       };
 
+  Map<String, dynamic> _atividadeParaApi(Map<String, Object?> row) => {
+        'ID': row['id'],
+        'MATRICULA': row['matricula'],
+        'NOME_TECNICO': row['nome_tecnico'],
+        'TIPO_ENTIDADE': row['tipo_entidade'],
+        'ACAO': row['acao'],
+        'DESCRICAO': row['descricao'],
+        'CRIADO_EM': row['criado_em'],
+      };
+
   // ---------------------------------------------------------------------
   // REABRIR (ADM)
   // ---------------------------------------------------------------------
@@ -327,6 +339,7 @@ class LevantamentoSyncService {
     final conectividade = (resposta['conectividade'] as List?) ?? const [];
     final wifi = (resposta['wifi'] as List?) ?? const [];
     final fotos = (resposta['fotos'] as List?) ?? const [];
+    final atividades = (resposta['atividades'] as List?) ?? const [];
 
     final db = await AppDatabase.instance.database;
     await db.transaction((txn) async {
@@ -350,6 +363,9 @@ class LevantamentoSyncService {
       }
       for (final item in fotos) {
         await _mergeLinhaSimples(txn, 'fotos_levantamento', item as Map<String, dynamic>, _fotoParaLocal);
+      }
+      for (final item in atividades) {
+        await _mergeLinhaSimples(txn, 'atividades', item as Map<String, dynamic>, _atividadeParaLocal);
       }
       for (final item in auxiliares) {
         await _mergeAuxiliar(txn, item as Map<String, dynamic>);
@@ -534,6 +550,18 @@ class LevantamentoSyncService {
         'criado_por': remoto['CRIADO_POR'],
         'criado_em': remoto['CRIADO_EM']?.toString(),
         'atualizado_em': remoto['ATUALIZADO_EM']?.toString(),
+      };
+
+  Map<String, Object?> _atividadeParaLocal(Map<String, dynamic> remoto) => {
+        'id': remoto['ID'],
+        'id_levantamento': remoto['ID_LEVANTAMENTO'],
+        'inep': remoto['INEP'],
+        'matricula': remoto['MATRICULA'],
+        'nome_tecnico': remoto['NOME_TECNICO'],
+        'tipo_entidade': remoto['TIPO_ENTIDADE'],
+        'acao': remoto['ACAO'],
+        'descricao': remoto['DESCRICAO'],
+        'criado_em': remoto['CRIADO_EM']?.toString(),
       };
 
   Future<void> _mergeAuxiliar(Transaction txn, Map<String, dynamic> remoto) async {

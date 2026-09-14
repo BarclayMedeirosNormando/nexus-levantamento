@@ -228,7 +228,7 @@ class _ConectividadeScreenState extends State<ConectividadeScreen> {
       ),
     );
     if (confirmou != true) return;
-    await _repo.remover(link.id);
+    await _repo.remover(link.id, matricula: widget.matricula);
     await _carregar();
   }
 

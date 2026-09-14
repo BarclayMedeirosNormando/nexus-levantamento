@@ -1,5 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
+import 'atividades_repository.dart';
 import 'database.dart';
 
 class Equipamento {
@@ -254,10 +255,12 @@ class EquipamentosRepository {
     String? fotoEtiquetaLocalPath,
     String? fotoEquipamentoLocalPath,
     required String matricula,
+    String? nomeTecnico,
   }) async {
     final db = await AppDatabase.instance.database;
     final agora = DateTime.now().toIso8601String();
     final idFinal = id ?? _uuid.v4();
+    final ehNovo = id == null;
 
     String? tombamentoAntigo;
     String? numSerieAntigo;
@@ -318,6 +321,19 @@ class EquipamentosRepository {
       numSerieNovo: numSerie,
     );
 
+    if (ehNovo) {
+      final descricaoModelo = (outroModelo != null && outroModelo.isNotEmpty) ? outroModelo : modelo;
+      await AtividadesRepository().registrar(
+        idLevantamento: idLevantamento,
+        inep: inep,
+        matricula: matricula,
+        nomeTecnico: nomeTecnico,
+        tipoEntidade: 'Equipamento',
+        acao: AtividadesRepository.acaoAdicionado,
+        descricao: [tipoEquipamento, marca, descricaoModelo].where((s) => s != null && s.isNotEmpty).join(' - '),
+      );
+    }
+
     return idFinal;
   }
 
@@ -350,7 +366,7 @@ class EquipamentosRepository {
   /// LevantamentoSyncService), então se esse equipamento já tinha sido
   /// sincronizado antes, ele continua existindo na planilha e pode voltar
   /// num próximo pull. Avisar isso na tela antes de confirmar.
-  Future<void> remover(String id) async {
+  Future<void> remover(String id, {required String matricula, String? nomeTecnico}) async {
     final equipamento = await buscar(id);
     final db = await AppDatabase.instance.database;
     await db.delete('equipamentos', where: 'id = ?', whereArgs: [id]);
@@ -361,6 +377,17 @@ class EquipamentosRepository {
         numSerieAntigo: equipamento.numSerie,
         tombamentoNovo: null,
         numSerieNovo: null,
+      );
+      await AtividadesRepository().registrar(
+        idLevantamento: equipamento.idLevantamento,
+        inep: equipamento.inep,
+        matricula: matricula,
+        nomeTecnico: nomeTecnico,
+        tipoEntidade: 'Equipamento',
+        acao: AtividadesRepository.acaoRemovido,
+        descricao: [equipamento.tipoEquipamento, equipamento.marca, equipamento.modeloExibido]
+            .where((s) => s != null && s.isNotEmpty)
+            .join(' - '),
       );
     }
   }
@@ -377,10 +404,12 @@ class EquipamentosRepository {
     String? modelo,
     required int quantidade,
     required String matricula,
+    String? nomeTecnico,
   }) async {
     final db = await AppDatabase.instance.database;
     final agora = DateTime.now().toIso8601String();
     final idFinal = id ?? _uuid.v4();
+    final ehNovo = id == null;
     if (id != null) {
       await db.update(
         'equipamentos_inserviveis',
@@ -411,12 +440,37 @@ class EquipamentosRepository {
         'sync_status': 'pending',
       });
     }
+    if (ehNovo) {
+      await AtividadesRepository().registrar(
+        idLevantamento: idLevantamento,
+        inep: inep,
+        matricula: matricula,
+        nomeTecnico: nomeTecnico,
+        tipoEntidade: 'Inservível',
+        acao: AtividadesRepository.acaoAdicionado,
+        descricao: '$tipoEquipamento${marca != null && marca.isNotEmpty ? " - $marca" : ""} (x$quantidade)',
+      );
+    }
     return idFinal;
   }
 
   /// Só local — mesmo caveat do `remover` de equipamento acima.
-  Future<void> removerInservivel(String id) async {
+  Future<void> removerInservivel(String id, {required String matricula, String? nomeTecnico}) async {
     final db = await AppDatabase.instance.database;
+    final rows = await db.query('equipamentos_inserviveis', where: 'id = ?', whereArgs: [id], limit: 1);
     await db.delete('equipamentos_inserviveis', where: 'id = ?', whereArgs: [id]);
+    if (rows.isNotEmpty) {
+      final inservivel = EquipamentoInservivel.fromRow(rows.first);
+      await AtividadesRepository().registrar(
+        idLevantamento: inservivel.idLevantamento,
+        inep: inservivel.inep,
+        matricula: matricula,
+        nomeTecnico: nomeTecnico,
+        tipoEntidade: 'Inservível',
+        acao: AtividadesRepository.acaoRemovido,
+        descricao:
+            '${inservivel.tipoEquipamento}${inservivel.marca != null && inservivel.marca!.isNotEmpty ? " - ${inservivel.marca}" : ""} (x${inservivel.quantidade})',
+      );
+    }
   }
 }

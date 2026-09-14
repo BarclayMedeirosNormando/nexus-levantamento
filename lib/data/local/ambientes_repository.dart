@@ -1,4 +1,5 @@
 import 'package:uuid/uuid.dart';
+import 'atividades_repository.dart';
 import 'database.dart';
 
 class AmbientePadrao {
@@ -83,6 +84,7 @@ class AmbientesRepository {
     required String idLevantamento,
     required String inep,
     required String matricula,
+    String? nomeTecnico,
     required List<AmbientePadrao> selecionados,
   }) async {
     if (selecionados.isEmpty) return;
@@ -104,6 +106,20 @@ class AmbientesRepository {
       });
     }
     await batch.commit(noResult: true);
+
+    // Um evento agregado só (não um por ambiente) — criados em lote na
+    // seleção inicial, um por linha viraria ruído na tela de auditoria.
+    await AtividadesRepository().registrar(
+      idLevantamento: idLevantamento,
+      inep: inep,
+      matricula: matricula,
+      nomeTecnico: nomeTecnico,
+      tipoEntidade: 'Ambiente',
+      acao: AtividadesRepository.acaoAdicionado,
+      descricao: selecionados.length == 1
+          ? selecionados.first.nomePadrao
+          : '${selecionados.length} ambientes: ${selecionados.map((p) => p.nomePadrao).join(', ')}',
+    );
   }
 
   /// Cria um único ambiente — usado pelo "Adicionar ambiente": tanto pra um
@@ -114,6 +130,7 @@ class AmbientesRepository {
     required String idLevantamento,
     required String inep,
     required String matricula,
+    String? nomeTecnico,
     String? idTipoAmbiente,
     required String nomeAmbiente,
     required String origem,
@@ -132,6 +149,100 @@ class AmbientesRepository {
       'atualizado_em': agora,
       'sync_status': 'pending',
     });
+
+    await AtividadesRepository().registrar(
+      idLevantamento: idLevantamento,
+      inep: inep,
+      matricula: matricula,
+      nomeTecnico: nomeTecnico,
+      tipoEntidade: 'Ambiente',
+      acao: AtividadesRepository.acaoAdicionado,
+      descricao: nomeAmbiente,
+    );
+  }
+
+  /// Remove um ambiente e tudo dentro dele, em cascata (2026-09-14):
+  /// - EQUIPAMENTOS e EQUIPAMENTOS_INSERVIVEIS deste ambiente são apagados
+  ///   de vez (não fazia sentido deixá-los "órfãos", sem ambiente nenhum);
+  ///   o índice local de duplicidade (Tombamento/Série) é limpo junto, pra
+  ///   não continuar bloqueando um Tombamento que na prática já foi embora.
+  /// - CONECTIVIDADE ligada a este ambiente (tipo "Escola") NUNCA é
+  ///   apagada — só desvinculada (ID_AMBIENTE volta a nulo): a internet em
+  ///   si continua existindo na escola mesmo que o ambiente onde ela foi
+  ///   registrada tenha sido removido, então apagar o link junto seria
+  ///   destruir informação que não tem relação com o erro sendo corrigido.
+  /// - Um único evento de auditoria é gravado (ver AtividadesRepository),
+  ///   com quantos equipamentos/inserviveis foram junto — é isso que
+  ///   alimenta a tela de Atividades pro ADM ver quem removeu o quê.
+  ///
+  /// Só local — mesmo caveat de todo `remover()` deste app: o backend nunca
+  /// apaga linha nenhuma (`upsertRows` só adiciona/atualiza), então se este
+  /// ambiente (ou algo dentro dele) já tinha sido sincronizado antes, ele
+  /// continua existindo na planilha e pode voltar num próximo pull vindo
+  /// de outro aparelho — avisado na tela antes de confirmar.
+  Future<void> removerComCascata({
+    required String id,
+    required String matricula,
+    String? nomeTecnico,
+  }) async {
+    final db = await AppDatabase.instance.database;
+
+    final ambienteRows = await db.query('ambientes', where: 'id = ?', whereArgs: [id], limit: 1);
+    if (ambienteRows.isEmpty) return;
+    final ambiente = ambienteRows.first;
+    final idLevantamento = ambiente['id_levantamento'] as String;
+    final inep = ambiente['inep'] as String;
+    final nomeAmbiente = ambiente['nome_ambiente'] as String? ?? '';
+
+    final equipamentos = await db.query('equipamentos', where: 'id_ambiente = ?', whereArgs: [id]);
+    final inserviveis = await db.query('equipamentos_inserviveis', where: 'id_ambiente = ?', whereArgs: [id]);
+
+    await db.transaction((txn) async {
+      for (final equip in equipamentos) {
+        final tombamento = equip['tombamento'] as String?;
+        final numSerie = equip['num_serie'] as String?;
+        if (tombamento != null && tombamento.trim().isNotEmpty) {
+          await txn.delete(
+            'indice_duplicidade',
+            where: 'chave = ?',
+            whereArgs: ['TOMBAMENTO|${tombamento.trim().toUpperCase()}'],
+          );
+        }
+        if (numSerie != null && numSerie.trim().isNotEmpty) {
+          await txn.delete(
+            'indice_duplicidade',
+            where: 'chave = ?',
+            whereArgs: ['NUM_SERIE|${numSerie.trim().toUpperCase()}'],
+          );
+        }
+      }
+      await txn.delete('equipamentos', where: 'id_ambiente = ?', whereArgs: [id]);
+      await txn.delete('equipamentos_inserviveis', where: 'id_ambiente = ?', whereArgs: [id]);
+      await txn.update(
+        'conectividade',
+        {
+          'id_ambiente': null,
+          'atualizado_em': DateTime.now().toIso8601String(),
+          'sync_status': 'pending',
+        },
+        where: 'id_ambiente = ?',
+        whereArgs: [id],
+      );
+      await txn.delete('ambientes', where: 'id = ?', whereArgs: [id]);
+    });
+
+    final partes = <String>[nomeAmbiente];
+    if (equipamentos.isNotEmpty) partes.add('${equipamentos.length} equipamento(s)');
+    if (inserviveis.isNotEmpty) partes.add('${inserviveis.length} inservível(is)');
+    await AtividadesRepository().registrar(
+      idLevantamento: idLevantamento,
+      inep: inep,
+      matricula: matricula,
+      nomeTecnico: nomeTecnico,
+      tipoEntidade: 'Ambiente',
+      acao: AtividadesRepository.acaoRemovido,
+      descricao: partes.join(' — '),
+    );
   }
 
   /// Renomeia um ambiente já criado — pedido do usuário: ambientes criados

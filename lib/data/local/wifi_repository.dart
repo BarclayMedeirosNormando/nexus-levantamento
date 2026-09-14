@@ -1,4 +1,5 @@
 import 'package:uuid/uuid.dart';
+import 'atividades_repository.dart';
 import 'database.dart';
 
 class RedeWifi {
@@ -51,6 +52,7 @@ class WifiRepository {
     required String idLevantamento,
     required String inep,
     required String matricula,
+    String? nomeTecnico,
     required String ssid,
     String? senha,
   }) async {
@@ -67,6 +69,16 @@ class WifiRepository {
       'atualizado_em': agora,
       'sync_status': 'pending',
     });
+
+    await AtividadesRepository().registrar(
+      idLevantamento: idLevantamento,
+      inep: inep,
+      matricula: matricula,
+      nomeTecnico: nomeTecnico,
+      tipoEntidade: 'Wifi',
+      acao: AtividadesRepository.acaoAdicionado,
+      descricao: ssid,
+    );
   }
 
   Future<void> atualizar({
@@ -92,8 +104,21 @@ class WifiRepository {
     );
   }
 
-  Future<void> remover(String id) async {
+  Future<void> remover(String id, {required String matricula, String? nomeTecnico}) async {
     final db = await AppDatabase.instance.database;
+    final rows = await db.query('wifi', where: 'id = ?', whereArgs: [id], limit: 1);
     await db.delete('wifi', where: 'id = ?', whereArgs: [id]);
+    if (rows.isNotEmpty) {
+      final rede = RedeWifi.fromRow(rows.first);
+      await AtividadesRepository().registrar(
+        idLevantamento: rede.idLevantamento,
+        inep: rede.inep,
+        matricula: matricula,
+        nomeTecnico: nomeTecnico,
+        tipoEntidade: 'Wifi',
+        acao: AtividadesRepository.acaoRemovido,
+        descricao: rede.ssid,
+      );
+    }
   }
 }

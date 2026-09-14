@@ -128,7 +128,7 @@ class _WifiScreenState extends State<WifiScreen> {
       ),
     );
     if (confirmou != true) return;
-    await _repo.remover(rede.id);
+    await _repo.remover(rede.id, matricula: widget.matricula);
     await _carregar();
   }
 

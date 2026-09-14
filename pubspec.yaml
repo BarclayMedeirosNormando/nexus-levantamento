@@ -42,6 +42,12 @@ dependencies:
 
   # Segurança / sessão
   flutter_secure_storage: ^9.2.2
+  # 2026-09-14: hash local da senha (ver auth_service.dart/
+  # conferirSenhaLocal) — confirmar ações destrutivas (ex.: remover
+  # ambiente) sem depender de internet no momento da confirmação. Nunca
+  # transmitido, nunca usado pra autenticar no servidor — só compara
+  # localmente contra o hash salvo no último login/troca de senha.
+  crypto: ^3.0.3
 
   # Sync em background — 2026-09-12: bumped de ^0.5.2 pra ^0.10.10. A 0.5.2
   # ainda usava classes do "shim" de compatibilidade com o embedding V1 do

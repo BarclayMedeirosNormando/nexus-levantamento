@@ -41,6 +41,7 @@ class _AmbienteDetailScreenState extends State<AmbienteDetailScreen> {
 
   late String _nome = widget.ambiente.nomeAmbiente;
   bool _renomeando = false;
+  bool _removendoAmbiente = false;
   bool _carregando = true;
   List<Equipamento> _equipamentos = const [];
   List<EquipamentoInservivel> _inserviveis = const [];
@@ -101,6 +102,80 @@ class _AmbienteDetailScreenState extends State<AmbienteDetailScreen> {
     });
   }
 
+  /// Remove o ambiente inteiro (2026-09-14) — pedido do usuário, espelhando
+  /// "Adicionar ambiente": confirma com a SENHA de quem está removendo
+  /// (a própria, não precisa ser ADM — ver AuthService.conferirSenhaLocal,
+  /// checado 100% local, funciona sem internet) e avisa antes se o
+  /// ambiente já tiver equipamento/inservível cadastrado, porque removê-lo
+  /// leva tudo isso junto (ver AmbientesRepository.removerComCascata).
+  Future<void> _removerAmbiente() async {
+    final totalItens = _equipamentos.length + _inserviveis.length;
+    final avisoConteudo = totalItens > 0
+        ? 'Este ambiente tem ${_equipamentos.length} equipamento(s) e ${_inserviveis.length} inservível(is) '
+            'cadastrados. Remover o ambiente remove tudo isso junto.\n\n'
+            'Isso remove só deste aparelho. Se algo aqui já tiver sido sincronizado antes, '
+            'pode voltar a aparecer numa próxima sincronização.'
+        : 'Isso remove só deste aparelho. Se esse ambiente já tiver sido sincronizado antes, '
+            'ele pode voltar a aparecer aqui numa próxima sincronização.';
+
+    final confirmou = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remover ambiente?'),
+        content: Text(avisoConteudo),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancelar')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Continuar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmou != true || !mounted) return;
+
+    final senhaController = TextEditingController();
+    final senhaConfirmada = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirme sua senha'),
+        content: TextField(
+          controller: senhaController,
+          autofocus: true,
+          obscureText: true,
+          decoration: const InputDecoration(hintText: 'Sua senha'),
+          onSubmitted: (v) => Navigator.of(dialogContext).pop(v),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Cancelar')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.of(dialogContext).pop(senhaController.text),
+            child: const Text('Remover'),
+          ),
+        ],
+      ),
+    );
+    if (senhaConfirmada == null || senhaConfirmada.isEmpty || !mounted) return;
+
+    final senhaOk = await AuthService().conferirSenhaLocal(senhaConfirmada);
+    if (!mounted) return;
+    if (!senhaOk) {
+      AppSnackbar.erro(context, 'Senha incorreta.');
+      return;
+    }
+
+    setState(() => _removendoAmbiente = true);
+    await _ambientesRepo.removerComCascata(
+      id: widget.ambiente.id,
+      matricula: widget.session.matricula,
+      nomeTecnico: widget.session.nome,
+    );
+    if (!mounted) return;
+    Navigator.of(context).pop();
+  }
+
   Future<void> _abrirNovoEquipamento() async {
     final resultado = await showCatalogoPickerSheet(context: context, session: widget.session);
     if (resultado == null || !mounted) return;
@@ -144,7 +219,11 @@ class _AmbienteDetailScreenState extends State<AmbienteDetailScreen> {
   Future<void> _removerEquipamento(Equipamento equipamento) async {
     final confirmou = await _confirmarRemocao(titulo: 'Remover equipamento?');
     if (confirmou != true) return;
-    await _equipamentosRepo.remover(equipamento.id);
+    await _equipamentosRepo.remover(
+      equipamento.id,
+      matricula: widget.session.matricula,
+      nomeTecnico: widget.session.nome,
+    );
     await _carregar();
   }
 
@@ -180,7 +259,11 @@ class _AmbienteDetailScreenState extends State<AmbienteDetailScreen> {
   Future<void> _removerInservivel(EquipamentoInservivel inservivel) async {
     final confirmou = await _confirmarRemocao(titulo: 'Remover inservível?');
     if (confirmou != true) return;
-    await _equipamentosRepo.removerInservivel(inservivel.id);
+    await _equipamentosRepo.removerInservivel(
+      inservivel.id,
+      matricula: widget.session.matricula,
+      nomeTecnico: widget.session.nome,
+    );
     await _carregar();
   }
 
@@ -260,9 +343,14 @@ class _AmbienteDetailScreenState extends State<AmbienteDetailScreen> {
         title: Text(_nome),
         actions: [
           IconButton(
-            onPressed: _renomeando ? null : _renomear,
+            onPressed: _renomeando || _removendoAmbiente ? null : _renomear,
             icon: const Icon(Icons.edit_outlined),
             tooltip: 'Renomear ambiente',
+          ),
+          IconButton(
+            onPressed: _renomeando || _removendoAmbiente ? null : _removerAmbiente,
+            icon: const Icon(Icons.delete_outline),
+            tooltip: 'Remover ambiente',
           ),
         ],
       ),

@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'api_client.dart';
 
@@ -56,6 +59,15 @@ class AuthService {
   // trocar escaparia da obrigação na próxima vez que abrisse (cairia
   // direto na Home via sessão salva).
   static const _kSenhaTemporaria = 'session_senha_temporaria';
+  // 2026-09-14: hash SHA-256 da senha, salvo aqui SÓ pra confirmação local
+  // de ações destrutivas (ver conferirSenhaLocal, usado em "Remover
+  // ambiente") — nunca enviado a lugar nenhum, nunca usado pra autenticar
+  // contra o servidor (isso continua sendo só o token). Existe porque o
+  // app é offline-first: pedir senha de novo pra confirmar algo em campo
+  // não pode depender de internet no momento (diferente de
+  // reabrir_levantamento, que reautentica no servidor de propósito, por
+  // ser uma ação rara e sempre feita por ADM).
+  static const _kSenhaHashLocal = 'session_senha_hash_local';
 
   /// Faz login contra o servidor. Lança [ApiException] se não tiver rede;
   /// retorna null (sem lançar) se o servidor respondeu mas recusou o login
@@ -80,6 +92,7 @@ class AuthService {
     );
 
     await _saveSession(session);
+    await _salvarHashSenhaLocal(senha);
     return LoginResult.success(session);
   }
 
@@ -123,7 +136,27 @@ class AuthService {
     }
     final atualizada = session.copyWith(senhaTemporaria: false);
     await _saveSession(atualizada);
+    await _salvarHashSenhaLocal(novaSenha);
     return atualizada;
+  }
+
+  Future<void> _salvarHashSenhaLocal(String senha) async {
+    final hash = sha256.convert(utf8.encode(senha)).toString();
+    await _storage.write(key: _kSenhaHashLocal, value: hash);
+  }
+
+  /// Confere a senha digitada contra o hash local salvo no último
+  /// login/troca de senha — usado pra confirmar ações destrutivas (ex.:
+  /// remover ambiente) sem exigir internet no momento da confirmação.
+  /// Sempre há um hash salvo depois de qualquer login bem-sucedido (ver
+  /// login/_salvarHashSenhaLocal acima), então isso só falha se a sessão
+  /// salva vier de antes desta mudança (nesse caso, pede pra a pessoa
+  /// logar de novo pelo menos uma vez).
+  Future<bool> conferirSenhaLocal(String senhaDigitada) async {
+    final hashSalvo = await _storage.read(key: _kSenhaHashLocal);
+    if (hashSalvo == null) return false;
+    final hashDigitado = sha256.convert(utf8.encode(senhaDigitada)).toString();
+    return hashDigitado == hashSalvo;
   }
 
   Future<void> logout() async {

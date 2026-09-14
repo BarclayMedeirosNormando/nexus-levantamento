@@ -14,6 +14,7 @@ import '../auth/trocar_senha_screen.dart';
 import '../catalogo/catalogo_modelos_screen.dart';
 import '../escola/escola_detail_screen.dart';
 import 'escola_card.dart';
+import '../atividades/atividades_screen.dart';
 import 'gerenciar_tecnicos_screen.dart';
 import 'levantamentos_lista_screen.dart';
 import 'regionais_screen.dart';
@@ -262,6 +263,12 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     );
   }
 
+  void _abrirAtividades() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const AtividadesScreen()),
+    );
+  }
+
   void _onMenuSelecionado(String valor) {
     switch (valor) {
       case 'catalogo':
@@ -272,6 +279,9 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         break;
       case 'gerenciar_tecnicos':
         _abrirGerenciarTecnicos();
+        break;
+      case 'atividades':
+        _abrirAtividades();
         break;
       case 'sair':
         _sair();
@@ -325,6 +335,14 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                   child: ListTile(
                     leading: Icon(Icons.manage_accounts_outlined),
                     title: Text('Gerenciar técnicos'),
+                  ),
+                ),
+              if (widget.session.isAdm)
+                const PopupMenuItem(
+                  value: 'atividades',
+                  child: ListTile(
+                    leading: Icon(Icons.history_outlined),
+                    title: Text('Atividades'),
                   ),
                 ),
               const PopupMenuItem(

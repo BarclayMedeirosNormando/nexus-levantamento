@@ -1,5 +1,6 @@
 import 'package:uuid/uuid.dart';
 
+import 'atividades_repository.dart';
 import 'database.dart';
 
 /// FOTOS (2026-09-14) — galeria geral do levantamento (nível da escola, não
@@ -84,6 +85,7 @@ class FotosLevantamentoRepository {
     required String idLevantamento,
     required String inep,
     required String matricula,
+    String? nomeTecnico,
     required String tipoFoto,
     String? outroTipoFoto,
     String? descricao,
@@ -104,10 +106,35 @@ class FotosLevantamentoRepository {
       'atualizado_em': agora,
       'sync_status': 'pending',
     });
+
+    await AtividadesRepository().registrar(
+      idLevantamento: idLevantamento,
+      inep: inep,
+      matricula: matricula,
+      nomeTecnico: nomeTecnico,
+      tipoEntidade: 'Foto',
+      acao: AtividadesRepository.acaoAdicionado,
+      descricao: tipoFoto == 'Outro' && outroTipoFoto != null && outroTipoFoto.isNotEmpty
+          ? 'Outro: $outroTipoFoto'
+          : tipoFoto,
+    );
   }
 
-  Future<void> remover(String id) async {
+  Future<void> remover(String id, {required String matricula, String? nomeTecnico}) async {
     final db = await AppDatabase.instance.database;
+    final rows = await db.query('fotos_levantamento', where: 'id = ?', whereArgs: [id], limit: 1);
     await db.delete('fotos_levantamento', where: 'id = ?', whereArgs: [id]);
+    if (rows.isNotEmpty) {
+      final foto = FotoLevantamento.fromRow(rows.first);
+      await AtividadesRepository().registrar(
+        idLevantamento: foto.idLevantamento,
+        inep: foto.inep,
+        matricula: matricula,
+        nomeTecnico: nomeTecnico,
+        tipoEntidade: 'Foto',
+        acao: AtividadesRepository.acaoRemovido,
+        descricao: foto.rotulo,
+      );
+    }
   }
 }

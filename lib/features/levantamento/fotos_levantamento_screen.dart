@@ -176,7 +176,7 @@ class _FotosLevantamentoScreenState extends State<FotosLevantamentoScreen> {
       ),
     );
     if (confirmou != true) return;
-    await _repo.remover(foto.id);
+    await _repo.remover(foto.id, matricula: widget.matricula);
     await _carregar();
   }
 

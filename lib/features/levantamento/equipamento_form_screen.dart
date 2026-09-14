@@ -229,6 +229,7 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
       fotoEtiquetaLocalPath: _fotoEtiquetaPath,
       fotoEquipamentoLocalPath: _fotoEquipamentoPath,
       matricula: widget.session.matricula,
+      nomeTecnico: widget.session.nome,
     );
     if (!mounted) return;
     Navigator.of(context).pop(true);

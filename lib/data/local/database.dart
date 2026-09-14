@@ -44,7 +44,14 @@ class AppDatabase {
   // so o caminho local (`foto_local_path`), nunca exige internet na hora;
   // quem sobe pro Drive e preenche `foto_url` e o FotoUploadService, no
   // sync (ver comentario de v3 acima e foto_upload_service.dart).
-  static const _dbVersion = 4;
+  // v5 (2026-09-14): nova tabela `atividades` — log de auditoria de
+  // adicao/remocao (Ambientes, Equipamentos, Inserviveis, Conectividade,
+  // Wifi, Fotos), pra o ADM ver o que cada tecnico fez. Mesma filosofia
+  // offline-first das outras tabelas: gravada localmente na hora (nunca
+  // exige internet), sincronizada depois via push/pull igual
+  // fotos_levantamento (ver AtividadesRepository e
+  // LevantamentoSyncService). So cresce (nunca e editada nem apagada).
+  static const _dbVersion = 5;
 
   Database? _db;
 
@@ -107,6 +114,23 @@ class AppDatabase {
             )
           ''');
           await db.execute('CREATE INDEX idx_fotos_levantamento_lv ON fotos_levantamento(id_levantamento)');
+        }
+        if (oldVersion < 5) {
+          await db.execute('''
+            CREATE TABLE atividades (
+              id TEXT PRIMARY KEY,
+              id_levantamento TEXT NOT NULL,
+              inep TEXT NOT NULL,
+              matricula TEXT NOT NULL,
+              nome_tecnico TEXT,
+              tipo_entidade TEXT NOT NULL,
+              acao TEXT NOT NULL,
+              descricao TEXT,
+              criado_em TEXT,
+              sync_status TEXT NOT NULL DEFAULT 'pending'
+            )
+          ''');
+          await db.execute('CREATE INDEX idx_atividades_lv ON atividades(id_levantamento)');
         }
       },
     );
@@ -318,6 +342,22 @@ class AppDatabase {
       )
     ''');
     batch.execute('CREATE INDEX idx_fotos_levantamento_lv ON fotos_levantamento(id_levantamento)');
+
+    batch.execute('''
+      CREATE TABLE atividades (
+        id TEXT PRIMARY KEY,
+        id_levantamento TEXT NOT NULL,
+        inep TEXT NOT NULL,
+        matricula TEXT NOT NULL,
+        nome_tecnico TEXT,
+        tipo_entidade TEXT NOT NULL,
+        acao TEXT NOT NULL,
+        descricao TEXT,
+        criado_em TEXT,
+        sync_status TEXT NOT NULL DEFAULT 'pending'
+      )
+    ''');
+    batch.execute('CREATE INDEX idx_atividades_lv ON atividades(id_levantamento)');
 
     // ---------------------------------------------------------------------
     // Índice leve de duplicidade (tombamento/série) — checagem instantânea
