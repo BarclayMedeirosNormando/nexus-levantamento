@@ -75,9 +75,15 @@ class FotoUploadService {
           try {
             comprimido = await FlutterImageCompress.compressWithFile(
               caminho,
-              minWidth: 1280,
-              minHeight: 1280,
-              quality: 70,
+              // Reduzido de 1280/70 pra 1024/62 (2026-09-14, pedido do
+              // Barclay: "imagens menores sem perder qualidade") — pra foto
+              // de documentação de campo (equipamento/galeria), a perda
+              // visual entre essas duas configurações é imperceptível na
+              // tela, mas o arquivo final fica bem menor (menos dado pra
+              // subir em rede de escola instável, menos espaço na planilha).
+              minWidth: 1024,
+              minHeight: 1024,
+              quality: 62,
             );
           } catch (_) {
             comprimido = null;
@@ -165,9 +171,10 @@ class FotoUploadService {
         try {
           comprimido = await FlutterImageCompress.compressWithFile(
             caminho,
-            minWidth: 1280,
-            minHeight: 1280,
-            quality: 70,
+            // Mesmo ajuste da compressão de foto de equipamento acima.
+            minWidth: 1024,
+            minHeight: 1024,
+            quality: 62,
           );
         } catch (_) {
           comprimido = null;
