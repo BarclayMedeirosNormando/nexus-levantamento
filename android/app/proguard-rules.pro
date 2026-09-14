@@ -38,3 +38,22 @@
 
 -keep class org.tensorflow.lite.** { *; }
 -dontwarn org.tensorflow.**
+
+# 2026-09-14 (round 2): mesmo com as regras acima, o app passou a fechar
+# sozinho ao ABRIR (antes de qualquer tela) em build --release. Stack trace
+# real obtido via 'flutter run --release' (USB) apontou a causa exata:
+#   java.lang.RuntimeException: Unable to get provider
+#   com.google.mlkit.common.internal.MlKitInitProvider: ... Unsatisfied
+#   dependency ... class com.google.mlkit.common.sdkinternal.d
+# Todo modulo do ML Kit (inclusive o de barcode) registra um ContentProvider
+# (MlKitInitProvider) que roda automaticamente no boot do app pra inicializar
+# o sistema interno de injecao de dependencia compartilhado
+# (com.google.mlkit.common.**). As regras -keep anteriores cobriram só
+# com.google.mlkit.vision.barcode.** (a API especifica de barcode), mas NAO
+# cobriam esse nucleo comum usado internamente - o R8 removeu/renomeou parte
+# dele, quebrando a inicializacao do app inteiro, nao so do scanner.
+-keep class com.google.mlkit.common.** { *; }
+-dontwarn com.google.mlkit.common.**
+
+-keep class com.google.android.gms.internal.mlkit_common.** { *; }
+-dontwarn com.google.android.gms.internal.mlkit_common.**
