@@ -61,6 +61,28 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  # Geram ícone/splash a partir de assets/icon/*.png — rodar depois de
+  # `flutter pub get`: `dart run flutter_launcher_icons` e
+  # `dart run flutter_native_splash:create`. Só mexem em arquivos nativos
+  # (android/ios), não entram no app compilado — zero custo em runtime.
+  flutter_launcher_icons: ^0.14.3
+  flutter_native_splash: ^2.4.3
 
 flutter:
   uses-material-design: true
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/icon.png"
+  adaptive_icon_background: "#262B65"
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"
+  min_sdk_android: 21
+
+flutter_native_splash:
+  color: "#262B65"
+  image: "assets/icon/splash_logo.png"
+  android_12:
+    color: "#262B65"
+    image: "assets/icon/splash_logo.png"
+    icon_background_color: "#262B65"
