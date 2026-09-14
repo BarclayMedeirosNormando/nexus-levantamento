@@ -48,23 +48,32 @@ class _EscolasListaScreenState extends State<EscolasListaScreen> {
               child: Text('Nenhuma escola encontrada.', style: TextStyle(color: AppColors.muted)),
             );
           }
-          return ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-            itemCount: escolas.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final escola = escolas[index];
-              return EscolaCard(
-                escola: escola,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => EscolaDetailScreen(escola: escola, session: widget.session),
-                    ),
+          return RefreshIndicator(
+            onRefresh: () async {
+              setState(() => _future = _repo.listarPorRegionalMunicipio(widget.regional, widget.municipio));
+              await _future;
+            },
+            child: FadeIn(
+              child: ListView.separated(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                itemCount: escolas.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (context, index) {
+                  final escola = escolas[index];
+                  return EscolaCard(
+                    escola: escola,
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => EscolaDetailScreen(escola: escola, session: widget.session),
+                        ),
+                      );
+                    },
                   );
                 },
-              );
-            },
+              ),
+            ),
           );
         },
       ),

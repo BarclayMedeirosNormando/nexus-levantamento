@@ -61,25 +61,34 @@ class _RegionaisListaState extends State<RegionaisLista> {
             ),
           );
         }
-        return ListView.separated(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
-          itemCount: regionais.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 8),
-          itemBuilder: (context, index) {
-            final r = regionais[index];
-            return TreeTile(
-              icon: Icons.map_outlined,
-              titulo: r.regional,
-              subtitulo: '${r.totalEscolas} escola${r.totalEscolas == 1 ? '' : 's'}',
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => MunicipiosScreen(regional: r.regional, session: widget.session),
-                  ),
+        return RefreshIndicator(
+          onRefresh: () async {
+            setState(() => _future = _repo.listarRegionais());
+            await _future;
+          },
+          child: FadeIn(
+            child: ListView.separated(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+              itemCount: regionais.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, index) {
+                final r = regionais[index];
+                return TreeTile(
+                  icon: Icons.map_outlined,
+                  titulo: r.regional,
+                  subtitulo: '${r.totalEscolas} escola${r.totalEscolas == 1 ? '' : 's'}',
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => MunicipiosScreen(regional: r.regional, session: widget.session),
+                      ),
+                    );
+                  },
                 );
               },
-            );
-          },
+            ),
+          ),
         );
       },
     );

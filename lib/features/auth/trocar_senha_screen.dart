@@ -72,9 +72,7 @@ class _TrocarSenhaScreenState extends State<TrocarSenhaScreen> {
       } else {
         // Acesso voluntário (Home → "Trocar minha senha") — só volta,
         // avisando que deu certo.
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Senha alterada com sucesso.')),
-        );
+        AppSnackbar.sucesso(context, 'Senha alterada com sucesso.');
         Navigator.of(context).pop();
       }
     } on ApiException catch (e) {

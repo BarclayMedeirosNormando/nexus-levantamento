@@ -41,29 +41,38 @@ class _MunicipiosScreenState extends State<MunicipiosScreen> {
               child: Text('Nenhum município encontrado.', style: TextStyle(color: AppColors.muted)),
             );
           }
-          return ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-            itemCount: municipios.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final m = municipios[index];
-              return TreeTile(
-                icon: Icons.location_city_outlined,
-                titulo: m.municipio,
-                subtitulo: '${m.totalEscolas} escola${m.totalEscolas == 1 ? '' : 's'}',
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => EscolasListaScreen(
-                        regional: widget.regional,
-                        municipio: m.municipio,
-                        session: widget.session,
-                      ),
-                    ),
+          return RefreshIndicator(
+            onRefresh: () async {
+              setState(() => _future = _repo.listarMunicipios(widget.regional));
+              await _future;
+            },
+            child: FadeIn(
+              child: ListView.separated(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                itemCount: municipios.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (context, index) {
+                  final m = municipios[index];
+                  return TreeTile(
+                    icon: Icons.location_city_outlined,
+                    titulo: m.municipio,
+                    subtitulo: '${m.totalEscolas} escola${m.totalEscolas == 1 ? '' : 's'}',
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => EscolasListaScreen(
+                            regional: widget.regional,
+                            municipio: m.municipio,
+                            session: widget.session,
+                          ),
+                        ),
+                      );
+                    },
                   );
                 },
-              );
-            },
+              ),
+            ),
           );
         },
       ),

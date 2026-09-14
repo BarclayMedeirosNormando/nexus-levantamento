@@ -65,15 +65,13 @@ class _GerenciarTecnicosScreenState extends State<GerenciarTecnicosScreen> {
     try {
       await _repo.resetarSenha(matricula: tecnico.matricula, session: widget.session);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Senha de ${tecnico.nome} resetada para 123456.')),
-      );
+      AppSnackbar.sucesso(context, 'Senha de ${tecnico.nome} resetada para 123456.');
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: ${e.message}')));
+      AppSnackbar.erro(context, 'Erro: ${e.message}');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro inesperado: $e')));
+      AppSnackbar.erro(context, 'Erro inesperado: $e');
     } finally {
       if (mounted) setState(() => _resetandoMatricula = null);
     }

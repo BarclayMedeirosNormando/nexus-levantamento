@@ -68,7 +68,7 @@ class _ConectividadeScreenState extends State<ConectividadeScreen> {
     final mensagem = criados == 0
         ? 'Nenhum contrato do Estado novo pra adicionar (ou a escola não tem contrato cadastrado).'
         : '$criados link${criados == 1 ? '' : 's'} do Estado adicionado${criados == 1 ? '' : 's'}.';
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(mensagem)));
+    AppSnackbar.info(context, mensagem);
   }
 
   Future<void> _abrirFormEscola({Conectividade? existente}) async {

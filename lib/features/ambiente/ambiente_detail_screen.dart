@@ -138,9 +138,7 @@ class _AmbienteDetailScreenState extends State<AmbienteDetailScreen> {
     await _equipamentosRepo.duplicar(equipamento.id, matricula: widget.session.matricula);
     await _carregar();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Equipamento duplicado — complete Tombamento e Nº de Série.')),
-    );
+    AppSnackbar.aviso(context, 'Equipamento duplicado — complete Tombamento e Nº de Série.');
   }
 
   Future<void> _removerEquipamento(Equipamento equipamento) async {

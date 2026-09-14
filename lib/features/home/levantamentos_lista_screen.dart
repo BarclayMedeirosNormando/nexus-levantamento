@@ -38,11 +38,13 @@ class LevantamentosListaScreen extends StatelessWidget {
                 ),
               ),
             )
-          : ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-              itemCount: itens.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (context, index) => _ItemCard(item: itens[index], session: session),
+          : FadeIn(
+              child: ListView.separated(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                itemCount: itens.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (context, index) => _ItemCard(item: itens[index], session: session),
+              ),
             ),
     );
   }
@@ -78,11 +80,7 @@ class _ItemCard extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Icon(
-              concluido ? Icons.check_circle_outline_rounded : Icons.hourglass_top_rounded,
-              size: 18,
-              color: concluido ? AppColors.primary : AppColors.warning,
-            ),
+            StatusLevantamentoChip(concluido: concluido),
             const SizedBox(width: 10),
             Expanded(
               child: Column(

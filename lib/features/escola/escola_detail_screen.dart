@@ -110,12 +110,21 @@ class _EscolaDetailScreenState extends State<EscolaDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.escola.nome)),
+      appBar: AppBar(
+        title: Hero(
+          tag: 'escola-nome-${widget.escola.inep}',
+          child: Material(
+            type: MaterialType.transparency,
+            child: Text(widget.escola.nome),
+          ),
+        ),
+      ),
       body: _carregando
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
+          : FadeIn(
+              child: ListView(
+                padding: const EdgeInsets.all(20),
+                children: [
                 _InfoRow(label: 'INEP', value: widget.escola.inep),
                 _InfoRow(label: 'Município', value: widget.escola.municipio ?? '—'),
                 _InfoRow(label: 'Regional', value: widget.escola.regional ?? '—'),
@@ -165,18 +174,8 @@ class _EscolaDetailScreenState extends State<EscolaDetailScreen> {
                         ),
                         child: Row(
                           children: [
-                            Icon(
-                              lv.status == 'concluido' ? Icons.check_circle_outline : Icons.hourglass_top_rounded,
-                              size: 18,
-                              color: lv.status == 'concluido' ? AppColors.success : AppColors.warning,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                lv.status == 'concluido' ? 'Concluído' : 'Em andamento',
-                                style: const TextStyle(fontSize: 13, color: AppColors.ink, fontWeight: FontWeight.w600),
-                              ),
-                            ),
+                            StatusLevantamentoChip(concluido: lv.status == 'concluido'),
+                            const Spacer(),
                             Text(
                               lv.tecnicoAbertura,
                               style: const TextStyle(fontSize: 12, color: AppColors.muted),
@@ -186,7 +185,8 @@ class _EscolaDetailScreenState extends State<EscolaDetailScreen> {
                       ),
                     ),
                   ),
-              ],
+                ],
+              ),
             ),
     );
   }

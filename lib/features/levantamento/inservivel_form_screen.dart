@@ -54,9 +54,7 @@ class _InservivelFormScreenState extends State<InservivelFormScreen> {
   Future<void> _salvar() async {
     final tipo = _tipoController.text.trim();
     if (tipo.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Informe o tipo do equipamento.')),
-      );
+      AppSnackbar.aviso(context, 'Informe o tipo do equipamento.');
       return;
     }
     final quantidade = int.tryParse(_quantidadeController.text.trim()) ?? 1;

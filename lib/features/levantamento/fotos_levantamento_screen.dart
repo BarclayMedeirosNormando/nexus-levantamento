@@ -72,14 +72,11 @@ class _FotosLevantamentoScreenState extends State<FotosLevantamentoScreen> {
     } catch (e) {
       if (!mounted) return;
       final negada = e is PlatformException && e.code == 'camera_access_denied';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            negada
-                ? 'Permissão de câmera negada. Habilite a Câmera nas configurações do Android para o app Nexus Levantamento.'
-                : 'Não foi possível abrir a câmera. Tente de novo.',
-          ),
-        ),
+      AppSnackbar.erro(
+        context,
+        negada
+            ? 'Permissão de câmera negada. Habilite a Câmera nas configurações do Android para o app Nexus Levantamento.'
+            : 'Não foi possível abrir a câmera. Tente de novo.',
       );
       return;
     }
@@ -200,19 +197,25 @@ class _FotosLevantamentoScreenState extends State<FotosLevantamentoScreen> {
                     ),
                   ),
                 )
-              : GridView.builder(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 90),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10,
-                    childAspectRatio: 0.82,
+              : RefreshIndicator(
+                  onRefresh: _carregar,
+                  child: FadeIn(
+                    child: GridView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 90),
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 2,
+                        mainAxisSpacing: 10,
+                        crossAxisSpacing: 10,
+                        childAspectRatio: 0.82,
+                      ),
+                      itemCount: _fotos.length,
+                      itemBuilder: (context, index) {
+                        final foto = _fotos[index];
+                        return _FotoCard(foto: foto, onRemover: () => _remover(foto));
+                      },
+                    ),
                   ),
-                  itemCount: _fotos.length,
-                  itemBuilder: (context, index) {
-                    final foto = _fotos[index];
-                    return _FotoCard(foto: foto, onRemover: () => _remover(foto));
-                  },
                 ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _adicionarFoto,

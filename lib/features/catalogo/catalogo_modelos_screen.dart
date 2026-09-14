@@ -64,9 +64,7 @@ class _CatalogoModelosScreenState extends State<CatalogoModelosScreen> {
       MaterialPageRoute(builder: (_) => ModeloFormScreen(session: widget.session)),
     );
     if (resultado == null || !mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Modelo "${resultado.item.label}" disponível no catálogo.')),
-    );
+    AppSnackbar.sucesso(context, 'Modelo "${resultado.item.label}" disponível no catálogo.');
     await _buscar(_buscaController.text);
   }
 
@@ -94,9 +92,7 @@ class _CatalogoModelosScreenState extends State<CatalogoModelosScreen> {
     final complemento = n > 0
         ? ' $n equipamento${n == 1 ? '' : 's'} já cadastrado${n == 1 ? '' : 's'} atualizado${n == 1 ? '' : 's'} junto.'
         : '';
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Modelo "${resultado.item.label}" atualizado.$complemento')),
-    );
+    AppSnackbar.sucesso(context, 'Modelo "${resultado.item.label}" atualizado.$complemento');
     await _buscar(_buscaController.text);
   }
 

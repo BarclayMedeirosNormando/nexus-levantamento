@@ -218,7 +218,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         );
       }
       if (partes.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(partes.join(' · '))));
+        AppSnackbar.sucesso(context, partes.join(' · '));
       }
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -506,23 +506,29 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         ),
       );
     }
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
-      itemCount: _resultadosBusca.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final escola = _resultadosBusca[index];
-        return EscolaCard(
-          escola: escola,
-          onTap: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => EscolaDetailScreen(escola: escola, session: widget.session),
-              ),
+    return RefreshIndicator(
+      onRefresh: () => _buscarEscolas(_buscaController.text.trim()),
+      child: FadeIn(
+        child: ListView.separated(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+          itemCount: _resultadosBusca.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 8),
+          itemBuilder: (context, index) {
+            final escola = _resultadosBusca[index];
+            return EscolaCard(
+              escola: escola,
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => EscolaDetailScreen(escola: escola, session: widget.session),
+                  ),
+                );
+              },
             );
           },
-        );
-      },
+        ),
+      ),
     );
   }
 }

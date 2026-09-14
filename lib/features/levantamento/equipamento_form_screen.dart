@@ -135,14 +135,11 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
     } catch (e) {
       if (!mounted) return;
       final negada = e is PlatformException && e.code == 'camera_access_denied';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            negada
-                ? 'Permissão de câmera negada. Habilite a Câmera nas configurações do Android para o app Nexus Levantamento.'
-                : 'Não foi possível abrir a câmera. Tente de novo.',
-          ),
-        ),
+      AppSnackbar.erro(
+        context,
+        negada
+            ? 'Permissão de câmera negada. Habilite a Câmera nas configurações do Android para o app Nexus Levantamento.'
+            : 'Não foi possível abrir a câmera. Tente de novo.',
       );
       return;
     }
@@ -210,9 +207,7 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
   Future<void> _salvar() async {
     final tipo = _tipoController.text.trim();
     if (tipo.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Informe o tipo do equipamento.')),
-      );
+      AppSnackbar.aviso(context, 'Informe o tipo do equipamento.');
       return;
     }
 

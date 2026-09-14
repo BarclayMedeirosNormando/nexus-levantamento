@@ -92,9 +92,7 @@ class _WifiScreenState extends State<WifiScreen> {
     final ssid = ssidController.text.trim();
     if (ssid.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Informe o SSID da rede.')),
-      );
+      AppSnackbar.aviso(context, 'Informe o SSID da rede.');
       return;
     }
     final senha = senhaController.text.trim();

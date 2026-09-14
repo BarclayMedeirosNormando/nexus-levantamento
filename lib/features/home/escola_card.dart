@@ -39,11 +39,17 @@ class EscolaCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      escola.nome,
-                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.ink),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    Hero(
+                      tag: 'escola-nome-${escola.inep}',
+                      child: Material(
+                        type: MaterialType.transparency,
+                        child: Text(
+                          escola.nome,
+                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.ink),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 2),
                     Text(
