@@ -202,6 +202,12 @@ class ConectividadeRepository {
         'velocidade_medida_upload_mbps': velocidadeUpload,
         'id_ambiente': idAmbiente,
         'atualizado_em': DateTime.now().toIso8601String(),
+        // Edição local depois de já ter vindo sincronizada do servidor
+        // precisa voltar pra fila — sem isso o próximo pull sobrescreveria
+        // essa edição de volta pro valor antigo (mesma lógica de guarda em
+        // WifiRepository.atualizar / bug relatado pelo Barclay: dado de
+        // Conectividade editado não subia).
+        'sync_status': 'pending',
       },
       where: 'id = ?',
       whereArgs: [id],
@@ -222,6 +228,8 @@ class ConectividadeRepository {
         'velocidade_medida_upload_mbps': velocidadeUpload,
         'status_link': statusLink,
         'atualizado_em': DateTime.now().toIso8601String(),
+        // Mesmo motivo do comentário em atualizarLinkEscola acima.
+        'sync_status': 'pending',
       },
       where: 'id = ?',
       whereArgs: [id],

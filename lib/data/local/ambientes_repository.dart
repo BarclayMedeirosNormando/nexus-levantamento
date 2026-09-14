@@ -141,7 +141,15 @@ class AmbientesRepository {
     final db = await AppDatabase.instance.database;
     await db.update(
       'ambientes',
-      {'nome_ambiente': novoNome, 'atualizado_em': DateTime.now().toIso8601String()},
+      {
+        'nome_ambiente': novoNome,
+        'atualizado_em': DateTime.now().toIso8601String(),
+        // Mesma lógica de guarda de WifiRepository.atualizar /
+        // ConectividadeRepository.atualizarLinkEscola: sem isso, um
+        // ambiente renomeado depois de já sincronizado nunca voltava a
+        // fila de push, e o próximo pull trazia o nome antigo de volta.
+        'sync_status': 'pending',
+      },
       where: 'id = ?',
       whereArgs: [id],
     );
