@@ -49,6 +49,13 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
 
   Widget _buildError(BuildContext context, MobileScannerException error, Widget? child) {
     final permissaoNegada = error.errorCode == MobileScannerErrorCode.permissionDenied;
+    // 2026-09-14: primeira tentativa (remover a foto da etiqueta) não
+    // resolveu — o erro persistiu mesmo sem esse fluxo antes. Enquanto não
+    // sabemos a causa real, mostramos o código/mensagem técnica do
+    // mobile_scanner na tela (pequeno, cinza) só pra conseguir diagnosticar
+    // com print/relato de campo, já que não há acesso a log do aparelho
+    // remotamente.
+    final detalhe = error.errorDetails;
     return Container(
       color: Colors.black,
       alignment: Alignment.center,
@@ -64,6 +71,14 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
                 : 'Não foi possível abrir a câmera.\nFeche outros apps que possam estar usando a câmera e tente de novo.',
             textAlign: TextAlign.center,
             style: const TextStyle(color: Colors.white, fontSize: 14),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Detalhe técnico: ${error.errorCode.name}'
+            '${detalhe?.code != null ? ' / ${detalhe!.code}' : ''}'
+            '${detalhe?.message != null ? '\n${detalhe!.message}' : ''}',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white38, fontSize: 11),
           ),
           const SizedBox(height: 20),
           OutlinedButton.icon(
