@@ -51,14 +51,14 @@ class PullAtivosResult {
 /// nunca remove. Mesma ideia serviria aqui se um dia isso virar pendência
 /// real (hoje o próprio Barclay não pediu isso).
 ///
-/// Caveat de escala entre APARELHOS DIFERENTES: deletarLinhasPorId apaga a
-/// linha na planilha, então um pull FUTURO (de qualquer aparelho) já não
-/// traz mais aquilo — mas um aparelho que JÁ tinha baixado essa linha antes
-/// da remoção não tem ela apagada automaticamente da base local dele (esta
-/// versão só evita reinserir onde a remoção aconteceu). Ficaria "sumido pro
-/// servidor, mas ainda visível" no aparelho de quem não fez a remoção, até
-/// alguém mexer nele de novo — fora do escopo deste fix (que resolve o caso
-/// relatado: mesmo aparelho, remoção reaparecendo em segundos).
+/// Propagação pra OUTROS aparelhos (2026-09-14 pt.2, pedido do Barclay:
+/// "quando deletar é pra sumir de todos os aparelhos"): toda remoção
+/// também grava um evento append-only na aba REMOCOES do servidor (ver
+/// registrarRemocoes no backend) — qualquer pull posterior, de QUALQUER
+/// aparelho, aplica esses eventos (`_aplicarRemocaoRemota`) apagando a
+/// linha localmente se ela ainda existir aí. Fecha o caveat anterior: um
+/// aparelho que já tinha baixado a linha ANTES da remoção agora também a
+/// perde no próximo sync, não só o aparelho que removeu.
 class LevantamentoSyncService {
   LevantamentoSyncService({ApiClient? apiClient}) : _api = apiClient ?? ApiClient();
   final ApiClient _api;
@@ -86,6 +86,18 @@ class LevantamentoSyncService {
     'conectividade': 'CONECTIVIDADE',
     'wifi': 'WIFI',
     'fotos_levantamento': 'FOTOS',
+  };
+
+  // Sentido inverso (2026-09-14 pt.2, ver _aplicarRemocaoRemota) — usado
+  // pra aplicar o log REMOCOES que vem do pull (remoção feita em OUTRO
+  // aparelho): traduz o nome da aba de volta pro nome da tabela local.
+  static const _tabelaLocalPorSheet = {
+    'AMBIENTES': 'ambientes',
+    'EQUIPAMENTOS': 'equipamentos',
+    'EQUIPAMENTOS_INSERVIVEIS': 'equipamentos_inserviveis',
+    'CONECTIVIDADE': 'conectividade',
+    'WIFI': 'wifi',
+    'FOTOS': 'fotos_levantamento',
   };
 
   // ---------------------------------------------------------------------
@@ -396,6 +408,7 @@ class LevantamentoSyncService {
     final wifi = (resposta['wifi'] as List?) ?? const [];
     final fotos = (resposta['fotos'] as List?) ?? const [];
     final atividades = (resposta['atividades'] as List?) ?? const [];
+    final remocoesRemotas = (resposta['remocoes'] as List?) ?? const [];
 
     final db = await AppDatabase.instance.database;
     await db.transaction((txn) async {
@@ -425,6 +438,14 @@ class LevantamentoSyncService {
       }
       for (final item in auxiliares) {
         await _mergeAuxiliar(txn, item as Map<String, dynamic>);
+      }
+      // Aplica remoções feitas em OUTROS aparelhos por ÚLTIMO (2026-09-14
+      // pt.2, pedido do Barclay: "quando deletar é pra sumir de todos os
+      // aparelhos") — depois de todo merge acima, pra uma remoção sempre
+      // vencer se por algum motivo o mesmo ID também tivesse vindo numa
+      // lista de upsert nesta mesma resposta.
+      for (final item in remocoesRemotas) {
+        await _aplicarRemocaoRemota(txn, item as Map<String, dynamic>);
       }
     });
 
@@ -523,6 +544,51 @@ class LevantamentoSyncService {
     final valores = converter(remoto);
     valores['sync_status'] = 'synced';
     await txn.insert(tabela, valores, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  // Aplica uma remoção que aconteceu em OUTRO aparelho (2026-09-14 pt.2,
+  // ver SHEET_HEADERS.REMOCOES/registrarRemocoes no backend). REMOCOES é
+  // um log append-only no servidor — cada pull traz de novo TODOS os
+  // eventos destes levantamentos, não só os novos; apagar uma linha que
+  // já não existe localmente é inofensivo (idempotente), então não
+  // precisa rastrear "já processei este evento específico" em lugar
+  // nenhum. Nunca grava um tombstone local pra isto — a remoção já foi
+  // confirmada pelo servidor, não precisa subir de novo.
+  Future<void> _aplicarRemocaoRemota(Transaction txn, Map<String, dynamic> remoto) async {
+    final tabelaSheet = remoto['TABELA']?.toString();
+    final idRegistro = remoto['ID_REGISTRO']?.toString();
+    if (tabelaSheet == null || idRegistro == null || idRegistro.isEmpty) return;
+    final tabelaLocal = _tabelaLocalPorSheet[tabelaSheet];
+    if (tabelaLocal == null) return;
+
+    if (tabelaLocal == 'equipamentos') {
+      // Mesma limpeza de índice de duplicidade que o remover() local já
+      // faz (ver EquipamentosRepository/AmbientesRepository.removerComCascata)
+      // — sem isto, um Tombamento/Série continuava "ocupado" pro índice
+      // deste aparelho mesmo depois do equipamento sumir por uma remoção
+      // feita em outro.
+      final rows = await txn.query('equipamentos', where: 'id = ?', whereArgs: [idRegistro], limit: 1);
+      if (rows.isNotEmpty) {
+        final tombamento = rows.first['tombamento'] as String?;
+        final numSerie = rows.first['num_serie'] as String?;
+        if (tombamento != null && tombamento.trim().isNotEmpty) {
+          await txn.delete(
+            'indice_duplicidade',
+            where: 'chave = ?',
+            whereArgs: ['TOMBAMENTO|${tombamento.trim().toUpperCase()}'],
+          );
+        }
+        if (numSerie != null && numSerie.trim().isNotEmpty) {
+          await txn.delete(
+            'indice_duplicidade',
+            where: 'chave = ?',
+            whereArgs: ['NUM_SERIE|${numSerie.trim().toUpperCase()}'],
+          );
+        }
+      }
+    }
+
+    await txn.delete(tabelaLocal, where: 'id = ?', whereArgs: [idRegistro]);
   }
 
   Map<String, Object?> _ambienteParaLocal(Map<String, dynamic> remoto) => {
