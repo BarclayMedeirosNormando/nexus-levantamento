@@ -5,8 +5,11 @@ import '../../core/theme.dart';
 import '../../data/levantamento_sync_service.dart';
 import '../../data/local/ambientes_repository.dart';
 import '../../data/local/auxiliares_repository.dart';
+import '../../data/local/conectividade_repository.dart';
 import '../../data/local/escolas_repository.dart';
+import '../../data/local/fotos_levantamento_repository.dart';
 import '../../data/local/levantamentos_repository.dart';
+import '../../data/local/wifi_repository.dart';
 import '../../data/remote/auth_service.dart';
 import '../ambiente/ambiente_detail_screen.dart';
 import 'adicionar_ambiente_screen.dart';
@@ -41,6 +44,9 @@ class LevantamentoScreen extends StatefulWidget {
 class _LevantamentoScreenState extends State<LevantamentoScreen> {
   final _ambientesRepo = AmbientesRepository();
   final _auxiliaresRepo = AuxiliaresRepository();
+  final _wifiRepo = WifiRepository();
+  final _conectividadeRepo = ConectividadeRepository();
+  final _fotosRepo = FotosLevantamentoRepository();
   final _levantamentosRepo = LevantamentosRepository();
   final _syncService = LevantamentoSyncService();
 
@@ -49,6 +55,9 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
   List<AmbientePadrao> _ambientesPadrao = const [];
   List<Ambiente> _ambientesCriados = const [];
   List<TecnicoOpcao> _auxiliares = const [];
+  int _qtdWifi = 0;
+  int _qtdConectividade = 0;
+  int _qtdFotos = 0;
   final Set<String> _selecionados = {};
 
   // Já começa com o valor vindo do banco (relevante ao "continuar" um
@@ -90,6 +99,7 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
       await _syncService.pullLevantamentosAtivos(widget.session);
       if (!mounted) return;
       await _recarregarAmbientesCriados();
+      await _recarregarContadores();
     } catch (_) {
       // Sem rede ou erro passageiro — tenta de novo no próximo ciclo (25s).
     } finally {
@@ -115,11 +125,17 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
     final padrao = await _ambientesRepo.listarPadrao();
     final criados = await _ambientesRepo.listarPorLevantamento(widget.levantamento.id);
     final auxiliares = await _auxiliaresRepo.listarAuxiliares(widget.levantamento.id);
+    final wifi = await _wifiRepo.listarPorLevantamento(widget.levantamento.id);
+    final conectividade = await _conectividadeRepo.listarPorLevantamento(widget.levantamento.id);
+    final fotos = await _fotosRepo.listarPorLevantamento(widget.levantamento.id);
     if (!mounted) return;
     setState(() {
       _ambientesPadrao = padrao;
       _ambientesCriados = criados;
       _auxiliares = auxiliares;
+      _qtdWifi = wifi.length;
+      _qtdConectividade = conectividade.length;
+      _qtdFotos = fotos.length;
       // Pré-marca os obrigatórios só na primeira carga (lista de criados
       // ainda vazia) — se já existem ambientes, essa seleção não é mais
       // relevante (a tela já vai direto pra lista).
@@ -142,6 +158,22 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
     final criados = await _ambientesRepo.listarPorLevantamento(widget.levantamento.id);
     if (!mounted) return;
     setState(() => _ambientesCriados = criados);
+  }
+
+  // Mesma ideia do de cima, só que pros contadores mostrados como bolinha
+  // nos ícones de Fotos/Wifi/Conectividade da AppBar (ver _iconeComContador)
+  // — chamado ao voltar de cada uma dessas telas e no poll de 25s, pra
+  // refletir o que outro auxiliar cadastrou também.
+  Future<void> _recarregarContadores() async {
+    final wifi = await _wifiRepo.listarPorLevantamento(widget.levantamento.id);
+    final conectividade = await _conectividadeRepo.listarPorLevantamento(widget.levantamento.id);
+    final fotos = await _fotosRepo.listarPorLevantamento(widget.levantamento.id);
+    if (!mounted) return;
+    setState(() {
+      _qtdWifi = wifi.length;
+      _qtdConectividade = conectividade.length;
+      _qtdFotos = fotos.length;
+    });
   }
 
   Future<void> _confirmarSelecaoInicial({bool pular = false}) async {
@@ -230,8 +262,8 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
     await _recarregarAmbientesCriados();
   }
 
-  void _abrirConectividade() {
-    Navigator.of(context).push(
+  Future<void> _abrirConectividade() async {
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ConectividadeScreen(
           escola: widget.escola,
@@ -241,6 +273,7 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
         ),
       ),
     );
+    await _recarregarContadores();
   }
 
   Future<void> _abrirWifi() async {
@@ -253,6 +286,7 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
         ),
       ),
     );
+    await _recarregarContadores();
   }
 
   Future<void> _abrirFotos() async {
@@ -265,6 +299,7 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
         ),
       ),
     );
+    await _recarregarContadores();
   }
 
   Future<void> _abrirConclusao() async {
@@ -282,6 +317,34 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
     if (concluido == true && mounted) Navigator.of(context).pop();
   }
 
+  // Ícone da AppBar com contador (bolinha com número) — mesmo padrão que já
+  // existia só no de "Técnicos auxiliares", agora reaproveitado em Fotos,
+  // Wifi e Conectividade também: dá pra ver de relance quantos já foram
+  // cadastrados sem precisar abrir a tela.
+  Widget _iconeComContador(IconData icone, int contador) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Icon(icone),
+        if (contador > 0)
+          Positioned(
+            right: -4,
+            top: -4,
+            child: Container(
+              padding: const EdgeInsets.all(3),
+              decoration: const BoxDecoration(color: AppColors.warning, shape: BoxShape.circle),
+              constraints: const BoxConstraints(minWidth: 15, minHeight: 15),
+              child: Text(
+                '$contador',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Só mostra o checklist inicial se a pessoa ainda não decidiu nada
@@ -295,42 +358,22 @@ class _LevantamentoScreenState extends State<LevantamentoScreen> {
         actions: [
           IconButton(
             onPressed: _carregando ? null : _abrirFotos,
-            icon: const Icon(Icons.photo_camera_outlined),
+            icon: _iconeComContador(Icons.photo_camera_outlined, _qtdFotos),
             tooltip: 'Fotos do levantamento',
           ),
           IconButton(
             onPressed: _carregando ? null : _abrirWifi,
-            icon: const Icon(Icons.vpn_key),
+            icon: _iconeComContador(Icons.wifi, _qtdWifi),
             tooltip: 'Wifi da escola',
           ),
           IconButton(
             onPressed: _carregando ? null : _abrirConectividade,
-            icon: const Icon(Icons.wifi),
+            icon: _iconeComContador(Icons.lan_outlined, _qtdConectividade),
             tooltip: 'Conectividade',
           ),
           IconButton(
             onPressed: _carregando ? null : _abrirGerenciarAuxiliares,
-            icon: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                const Icon(Icons.people_outline),
-                if (_auxiliares.isNotEmpty)
-                  Positioned(
-                    right: -4,
-                    top: -4,
-                    child: Container(
-                      padding: const EdgeInsets.all(3),
-                      decoration: const BoxDecoration(color: AppColors.warning, shape: BoxShape.circle),
-                      constraints: const BoxConstraints(minWidth: 15, minHeight: 15),
-                      child: Text(
-                        '${_auxiliares.length}',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+            icon: _iconeComContador(Icons.people_outline, _auxiliares.length),
             tooltip: 'Técnicos auxiliares',
           ),
         ],
