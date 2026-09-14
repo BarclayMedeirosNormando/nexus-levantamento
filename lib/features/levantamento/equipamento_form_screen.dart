@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show PlatformException;
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/theme.dart';
 import '../../data/local/catalogo_repository.dart';
@@ -15,15 +14,25 @@ import 'sugestoes_chips.dart';
 /// Tela 6 do spec — formulário de Equipamento (criar/editar), dentro de um
 /// Ambiente.
 ///
-/// Captura de foto/código de barras/OCR (2026-09-12): foto (image_picker),
-/// leitura de código de barras (mobile_scanner) e OCR de etiqueta
-/// (google_mlkit_text_recognition) são plugins mobile-only — sem
-/// implementação no Windows/Linux/macOS, então só dá pra testar de verdade
-/// num Android (emulador ou aparelho); no build desktop os botões de câmera
-/// existem mas não vão funcionar. A foto em si nunca exige internet — só
-/// grava um caminho local (ver `EquipamentosRepository`/`database.dart`
-/// v3); quem sobe pro Drive de fato é o `FotoUploadService`, rodado a cada
-/// sincronização (ver `SyncEngine`).
+/// Captura de foto/código de barras (2026-09-12): foto (image_picker) e
+/// leitura de código de barras (mobile_scanner) são plugins mobile-only —
+/// sem implementação no Windows/Linux/macOS, então só dá pra testar de
+/// verdade num Android (emulador ou aparelho); no build desktop os botões
+/// de câmera existem mas não vão funcionar. A foto em si nunca exige
+/// internet — só grava um caminho local (ver
+/// `EquipamentosRepository`/`database.dart` v3); quem sobe pro Drive de
+/// fato é o `FotoUploadService`, rodado a cada sincronização (ver
+/// `SyncEngine`).
+///
+/// 2026-09-14: removida a captura de FOTO DA ETIQUETA (e o OCR que rodava
+/// sobre ela) a pedido — os campos Tombamento e Nº de Série já têm botão
+/// próprio de leitura de código de barras, tornando o fluxo de etiqueta
+/// redundante. Isso também elimina um caso real de conflito de câmera: em
+/// alguns aparelhos, abrir a câmera nativa do image_picker e, em seguida,
+/// abrir o preview do mobile_scanner sem o hardware ter sido liberado a
+/// tempo, fazia o scanner falhar com "Não foi possível abrir a câmera"
+/// (reportado em campo). `_fotoEtiquetaPath` continua existindo só pra não
+/// perder a foto de quem já tinha uma salva antes desta mudança.
 ///
 /// [catalogoInicial] pré-preenche Tipo/Marca/Modelo quando a tela é aberta
 /// já com um item escolhido no catálogo (fluxo "catálogo primeiro" a partir
@@ -70,8 +79,6 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
 
   String? _fotoEtiquetaPath;
   String? _fotoEquipamentoPath;
-  List<String> _linhasOcr = const [];
-  bool _reconhecendoTexto = false;
 
   bool _salvando = false;
 
@@ -110,15 +117,14 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
     });
   }
 
-  // -- Foto / OCR / código de barras --------------------------------------
+  // -- Foto / código de barras --------------------------------------------
 
-  /// 2026-09-14: agora com try/catch — antes, se a permissão de câmera
-  /// estivesse negada (ou qualquer outra falha do image_picker), a exceção
-  /// não era tratada e o técnico via a tela de erro vermelha do Flutter em
-  /// vez de uma mensagem explicando o que fazer. Isso também pode ter sido
-  /// a origem do "ícone de exclamação" relatado em campo ao tirar foto da
-  /// etiqueta (de onde saem tombamento e número de série via OCR).
-  Future<void> _tirarFoto({required bool etiqueta}) async {
+  /// Foto do equipamento (única captura de câmera que sobrou nesta tela —
+  /// ver nota de 2026-09-14 na doc da classe). Com try/catch: se a
+  /// permissão de câmera estiver negada (ou qualquer outra falha do
+  /// image_picker), mostra um aviso em vez de deixar a exceção estourar sem
+  /// tratamento.
+  Future<void> _tirarFoto() async {
     final XFile? arquivo;
     try {
       arquivo = await _picker.pickImage(
@@ -141,72 +147,11 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
       return;
     }
     if (arquivo == null || !mounted) return;
-    setState(() {
-      if (etiqueta) {
-        _fotoEtiquetaPath = arquivo!.path;
-        _linhasOcr = const [];
-      } else {
-        _fotoEquipamentoPath = arquivo!.path;
-      }
-    });
-    // OCR só faz sentido na foto da etiqueta (é onde ficam tombamento/série
-    // impressos) — a foto do equipamento em si não passa por reconhecimento
-    // de texto nenhum.
-    if (etiqueta) {
-      await _rodarOcr(arquivo.path);
-    }
+    setState(() => _fotoEquipamentoPath = arquivo!.path);
   }
 
-  void _removerFoto({required bool etiqueta}) {
-    setState(() {
-      if (etiqueta) {
-        _fotoEtiquetaPath = null;
-        _linhasOcr = const [];
-      } else {
-        _fotoEquipamentoPath = null;
-      }
-    });
-  }
-
-  /// Roda OCR sobre a foto da etiqueta e junta as linhas de texto
-  /// reconhecidas — mostradas depois como chips que o técnico toca pra
-  /// preencher Tombamento ou Nº de Série (ver [_usarTextoOcr]), sem tentar
-  /// adivinhar sozinho qual linha é qual (etiquetas variam demais de escola
-  /// pra escola pra confiar num "auto-preenchimento"). Falha de OCR nunca
-  /// bloqueia o formulário — é só uma ajuda a mais; sem ela, o técnico
-  /// preenche os campos manualmente do mesmo jeito de sempre.
-  Future<void> _rodarOcr(String caminho) async {
-    setState(() => _reconhecendoTexto = true);
-    try {
-      final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
-      final resultado = await recognizer.processImage(InputImage.fromFilePath(caminho));
-      await recognizer.close();
-
-      final linhas = <String>[];
-      for (final bloco in resultado.blocks) {
-        for (final linha in bloco.lines) {
-          final texto = linha.text.trim();
-          if (texto.isNotEmpty && !linhas.contains(texto)) linhas.add(texto);
-        }
-      }
-      if (!mounted) return;
-      setState(() => _linhasOcr = linhas);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _linhasOcr = const []);
-    } finally {
-      if (mounted) setState(() => _reconhecendoTexto = false);
-    }
-  }
-
-  void _usarTextoOcr(String texto, {required bool numSerie}) {
-    setState(() {
-      if (numSerie) {
-        _numSerieController.text = texto;
-      } else {
-        _tombamentoController.text = texto;
-      }
-    });
+  void _removerFoto() {
+    setState(() => _fotoEquipamentoPath = null);
   }
 
   /// 2026-09-14: agora aceita [numSerie] pra reaproveitar a mesma tela de
@@ -337,26 +282,6 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
           TextField(controller: _modeloController, textCapitalization: TextCapitalization.words),
           const SizedBox(height: 16),
 
-          _buildFotoTile(
-            titulo: 'FOTO DA ETIQUETA',
-            caminho: _fotoEtiquetaPath,
-            onTirar: () => _tirarFoto(etiqueta: true),
-            onRemover: () => _removerFoto(etiqueta: true),
-          ),
-          if (_reconhecendoTexto)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Row(
-                children: [
-                  SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
-                  SizedBox(width: 8),
-                  Text('Lendo texto da etiqueta...', style: TextStyle(color: AppColors.muted, fontSize: 12)),
-                ],
-              ),
-            ),
-          _buildOcrChips(),
-          const SizedBox(height: 16),
-
           const Text('TOMBAMENTO', style: _labelStyle),
           const SizedBox(height: 6),
           Row(
@@ -410,8 +335,8 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
           _buildFotoTile(
             titulo: 'FOTO DO EQUIPAMENTO',
             caminho: _fotoEquipamentoPath,
-            onTirar: () => _tirarFoto(etiqueta: false),
-            onRemover: () => _removerFoto(etiqueta: false),
+            onTirar: _tirarFoto,
+            onRemover: _removerFoto,
           ),
           const SizedBox(height: 16),
 
@@ -517,37 +442,6 @@ class _EquipamentoFormScreenState extends State<EquipamentoFormScreen> {
         tooltip: tooltip,
         constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         padding: EdgeInsets.zero,
-      ),
-    );
-  }
-
-  Widget _buildOcrChips() {
-    if (_linhasOcr.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Texto lido na etiqueta — toque pra usar como Tombamento, ou na setinha pra usar como Nº de Série:',
-            style: TextStyle(color: AppColors.muted, fontSize: 11),
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: _linhasOcr
-                .map(
-                  (linha) => InputChip(
-                    label: Text(linha, style: const TextStyle(fontSize: 12)),
-                    onPressed: () => _usarTextoOcr(linha, numSerie: false),
-                    deleteIcon: const Icon(Icons.arrow_forward, size: 14),
-                    onDeleted: () => _usarTextoOcr(linha, numSerie: true),
-                  ),
-                )
-                .toList(),
-          ),
-        ],
       ),
     );
   }
